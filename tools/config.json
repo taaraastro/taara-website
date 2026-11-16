@@ -1,0 +1,11 @@
+{
+  "siteUrl": "https://taaraastro.in",
+  "appUrl": "https://taaraastro.in/",
+  "langs": [
+    "en",
+    "hi"
+  ],
+  "skipRoot": true,
+  "adsenseClient": "",
+  "adsenseSlot": ""
+}

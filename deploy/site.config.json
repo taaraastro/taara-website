@@ -1,0 +1,38 @@
+{
+  "brand": "Taara",
+  "domain": "taaraastro.in",
+  "siteUrl": "https://taaraastro.in",
+  "contact": "WhatsApp / call +91 98203 23128",
+  "contactEmail": "taaraastro.in@gmail.com",
+  "ownerName": "Taara Astro",
+  "address": "Mumbai, Maharashtra, India",
+  "freeQuestions": 5,
+  "lockDates": false,
+  "payLinks": {
+    "qpack15": "",
+    "qpack40": "",
+    "silver-m": "",
+    "silver-y": "",
+    "gold-m": "",
+    "gold-y": "",
+    "unlimited-m": "",
+    "unlimited-y": "",
+    "report": "",
+    "reportpack": "",
+    "voicepack": "",
+    "addon": ""
+  },
+  "adsense": {
+    "client": "",
+    "slot": ""
+  },
+  "googleVerification": "",
+  "voiceProxy": "",
+  "feedbackUrl": "",
+  "rashifalLangs": [
+    "en",
+    "hi"
+  ],
+  "rashifalDays": 2,
+  "assetlinks": []
+}
