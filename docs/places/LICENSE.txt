@@ -1,0 +1,4 @@
+These place files are derived from the Countries States Cities Database
+(https://github.com/dr5hn/countries-states-cities-database) and are made
+available under the Open Database License (ODbL) 1.0:
+https://opendatacommons.org/licenses/odbl/1-0/

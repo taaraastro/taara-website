@@ -1196,49 +1196,93 @@ function placeFields(px, pre) {
   const r = resolvePre(pre), sts = statesOf(r.country);
   const st = sts.includes(r.state) ? r.state : "";
   const hasCoords = pre.lat !== undefined && pre.lat !== "";
-  const tzBase = hasCoords ? (+pre.tz - (pre.dst ? 1 : 0)) : "";
+  const tzBase = hasCoords ? +pre.tz : "";
   return `<div class="placebox" id="${px}-placebox">
     <label for="${px}-city">Place of birth (city or town)</label>
-    <input id="${px}-city" list="${px}-cities" data-place="${px}" value="${esc(r.city)}" placeholder="Start typing: Mumbai, Patna, Madurai…" autocomplete="off">
-    <datalist id="${px}-cities">${citiesOf(r.country, st).map(c => `<option value="${esc(c[0])}">`).join("")}</datalist>
+    <input id="${px}-city" list="${px}-cities" data-place="${px}" value="${esc(r.city)}" placeholder="Start typing any city: Mumbai, Patna, London…" autocomplete="off">
+    <datalist id="${px}-cities">${cityOptions(r.country, st, "")}</datalist>
+    <input type="hidden" id="${px}-iana" value="${esc(pre.iana || "")}">
     <p class="note pnote" id="${px}-pnote" role="status"></p>
     <details class="more"${r.country !== "India" ? " open" : ""}><summary>Born outside India, or town not listed?</summary>
       <div class="two">
         <div><label for="${px}-country">Country</label><select id="${px}-country" data-place="${px}">${COUNTRIES.map(c => `<option${c === r.country ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
         <div><label for="${px}-state">State / province</label><select id="${px}-state" data-place="${px}"><option value="">Choose state</option>${sts.map(s => `<option${s === st ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></div>
       </div>
-      <label class="check" id="${px}-dstwrap"${DST_COUNTRIES.has(r.country) ? "" : " hidden"}><input type="checkbox" id="${px}-dst"${pre.dst ? " checked" : ""}> Daylight saving time was on at birth</label>
-      <div class="three"><div><label for="${px}-lat">Latitude</label><input id="${px}-lat" type="number" step="0.001" value="${hasCoords ? pre.lat : ""}"></div><div><label for="${px}-lon">Longitude</label><input id="${px}-lon" type="number" step="0.001" value="${hasCoords ? pre.lon : ""}"></div><div><label for="${px}-tz">UTC offset</label><input id="${px}-tz" type="number" step="0.25" value="${tzBase}"></div></div>
-      <p class="note">Filled in automatically from your city. Change them only if your town is not listed.</p>
+      <div class="three"><div><label for="${px}-lat">Latitude</label><input id="${px}-lat" type="number" step="0.001" value="${hasCoords ? pre.lat : ""}"></div><div><label for="${px}-lon">Longitude</label><input id="${px}-lon" type="number" step="0.001" value="${hasCoords ? pre.lon : ""}"></div><div><label for="${px}-tz">UTC offset</label><input id="${px}-tz" type="number" step="0.01" value="${tzBase}"></div></div>
+      <p class="note">Filled in automatically from your city. The time zone, including daylight saving and old historical changes, is worked out for your exact birth date. Change these only if your town is not listed.</p>
     </details>
   </div>`;
 }
+function cityOptions(country, st, q) {
+  const n = norm(q), pool = citiesOf(country, st);
+  let list = !n ? pool.slice(0, 60) : [...pool.filter(c => norm(c[0]).startsWith(n)), ...pool.filter(c => !norm(c[0]).startsWith(n) && norm(c[0]).includes(n))].slice(0, 60);
+  const dup = new Set(), many = new Set();
+  list.forEach(c => { const k = norm(c[0]); dup.has(k) ? many.add(k) : dup.add(k); });
+  return list.map(c => `<option value="${esc(many.has(norm(c[0])) || st === "" && pool.length > 60 && c[1] ? c[0] + ", " + c[1] : c[0])}">`).join("");
+}
+function splitCity(raw, country) {
+  const parts = String(raw || "").split(",").map(x => x.trim()).filter(Boolean);
+  if (parts.length < 2) return { city: parts[0] || "", state: "" };
+  const sts = statesOf(country), st = parts.slice(1).find(x => sts.includes(x)) || "";
+  return { city: parts[0], state: st };
+}
+function setPlaceFields(px, rec, note) {
+  const date = ($(`#${px}-date`) || {}).value, time = typeof readTime === "function" ? readTime(px) : "";
+  $(`#${px}-lat`).value = rec[3]; $(`#${px}-lon`).value = rec[4];
+  $(`#${px}-iana`).value = rec[6] || "";
+  const tz = placeTz(rec, date, time); $(`#${px}-tz`).value = isNaN(tz) ? "" : tz;
+  if (note !== undefined) $(`#${px}-pnote`).textContent = note;
+}
+function fillStates(px, country, keep) {
+  const sEl = $(`#${px}-state`); sEl.innerHTML = `<option value="">Choose state</option>` + statesOf(country).map(s => `<option${s === keep ? " selected" : ""}>${esc(s)}</option>`).join("");
+}
+let placeSeq = 0;
 function placeChanged(px, which) {
   const cEl = $(`#${px}-country`), sEl = $(`#${px}-state`), cityEl = $(`#${px}-city`);
   if (!cEl) return;
-  const country = cEl.value;
+  const seq = ++placeSeq, country = cEl.value;
   if (which === "country") {
-    sEl.innerHTML = `<option value="">Choose state</option>` + statesOf(country).map(s => `<option>${esc(s)}</option>`).join("");
-    cityEl.value = "";
-    $(`#${px}-dstwrap`).hidden = !DST_COUNTRIES.has(country);
+    fillStates(px, country, ""); cityEl.value = "";
+    if (!PLACE_DATA[country]) { $(`#${px}-pnote`).textContent = "Loading cities…"; loadCountry(country).then(ok => { if ($(`#${px}-country`) && cEl.value === country) { fillStates(px, country, sEl.value); $(`#${px}-cities`).innerHTML = cityOptions(country, sEl.value, ""); $(`#${px}-pnote`).textContent = ok ? "" : "Could not load this country's cities. Type your town and enter its coordinates below."; } }); }
   }
-  if (which === "country" || which === "state") $(`#${px}-cities`).innerHTML = citiesOf(country, sEl.value).map(c => `<option value="${esc(c[0])}">`).join("");
-  const city = cityEl.value.trim();
+  if (which === "lat" || which === "lon" || which === "tz") { if (which === "tz") $(`#${px}-iana`).value = ""; return; }
+  if (which === "date" || which === "ap" || which === "hh" || which === "mm") { const iana = $(`#${px}-iana`).value; if (iana) { const t = tzOffset(iana, $(`#${px}-date`).value, readTime(px)); if (!isNaN(t)) $(`#${px}-tz`).value = t; } return; }
+  const { city, state: typedState } = splitCity(cityEl.value, country);
+  if (typedState && sEl.value !== typedState) sEl.value = typedState;
+  $(`#${px}-cities`).innerHTML = cityOptions(country, which === "city" ? (typedState || "") : sEl.value, city);
   const hit = findPlace(city, sEl.value, country);
   const note = $(`#${px}-pnote`);
-  let ref = hit;
-  if (hit && sEl.value !== hit[1]) { sEl.value = hit[1]; $(`#${px}-cities`).innerHTML = citiesOf(country, hit[1]).map(c => `<option value="${esc(c[0])}">`).join(""); }
-  if (!hit) ref = citiesOf(country, sEl.value)[0] || citiesOf(country)[0];
-  if (ref) { $(`#${px}-lat`).value = ref[3]; $(`#${px}-lon`).value = ref[4]; $(`#${px}-tz`).value = ref[5]; }
-  if (hit) note.textContent = `✓ ${hit[0]}, ${hit[1]}, ${hit[2]} · ${Math.abs(hit[3]).toFixed(2)}°${hit[3] >= 0 ? "N" : "S"}, ${Math.abs(hit[4]).toFixed(2)}°${hit[4] >= 0 ? "E" : "W"}`;
-  else if (city && ref) note.textContent = `${city} is not in our list yet, so we are using ${ref[0]} (${ref[1]}). That is close enough for Moon sign and dashas. For an exact Lagna, enter your town's coordinates below.`;
-  else note.textContent = "";
+  if (hit) {
+    if (sEl.value !== hit[1]) { if (![...sEl.options].some(o => o.value === hit[1])) fillStates(px, country, hit[1]); sEl.value = hit[1]; }
+    setPlaceFields(px, hit, `✓ ${hit[0]}${hit[1] ? ", " + hit[1] : ""}, ${hit[2]} · ${Math.abs(hit[3]).toFixed(2)}°${hit[3] >= 0 ? "N" : "S"}, ${Math.abs(hit[4]).toFixed(2)}°${hit[4] >= 0 ? "E" : "W"}`);
+    return;
+  }
+  const ref = citiesOf(country, sEl.value)[0] || citiesOf(country)[0];
+  if (ref) setPlaceFields(px, ref);
+  if (!city) { note.textContent = ""; return; }
+  note.textContent = ref ? `Looking for ${city}…` : "";
+  const fallback = () => { if (seq !== placeSeq) return; note.textContent = ref ? `${city} is not in our list, so we are using ${ref[0]}${ref[1] ? " (" + ref[1] + ")" : ""}. Pick the nearest town from the suggestions, or open the box below and enter your town's coordinates for an exact Lagna.` : `${city} is not in our list. Choose the country, or enter coordinates below.`; };
+  if (norm(city).length < 3) return fallback();
+  (PLACE_DATA[country] ? Promise.resolve(false) : loadCountry(country)).then(loaded => {
+    if (seq !== placeSeq) return;
+    if (loaded) return placeChanged(px, "city2");
+    return loadBig().then(big => {
+      if (seq !== placeSeq || !big) return fallback();
+      const n = norm(city), b = big.find(x => norm(x[0]) === n && x[2] !== country);
+      if (!b) return fallback();
+      cEl.value = b[2]; fillStates(px, b[2], b[1]); note.textContent = `Found ${b[0]} in ${b[2]}. Loading…`;
+      loadCountry(b[2]).then(() => { if (seq !== placeSeq) return; fillStates(px, b[2], b[1]); placeChanged(px, "city2"); });
+    });
+  });
 }
 function readPlace(px) {
-  const country = $(`#${px}-country`).value, st = $(`#${px}-state`).value, city = $(`#${px}-city`).value.trim();
-  const dst = DST_COUNTRIES.has(country) && $(`#${px}-dst`).checked;
-  const lat = parseFloat($(`#${px}-lat`).value), lon = parseFloat($(`#${px}-lon`).value), tz = parseFloat($(`#${px}-tz`).value);
-  return { city, state: st, country, dst, place: [city, st, country].filter(Boolean).join(", "), lat, lon, tz: tz + (dst ? 1 : 0) };
+  const country = $(`#${px}-country`).value, raw = $(`#${px}-city`).value.trim(), st = $(`#${px}-state`).value;
+  const city = splitCity(raw, country).city || raw;
+  const iana = ($(`#${px}-iana`) || {}).value || "";
+  const lat = parseFloat($(`#${px}-lat`).value), lon = parseFloat($(`#${px}-lon`).value);
+  const date = ($(`#${px}-date`) || {}).value, time = readTime(px);
+  let tz = iana ? tzOffset(iana, date, time) : NaN; if (isNaN(tz)) tz = parseFloat($(`#${px}-tz`).value);
+  return { city, state: st, country, dst: false, iana, place: [city, st, country].filter(Boolean).join(", "), lat, lon, tz };
 }
 function saveForm() {
   const v = id => $("#" + id).value.trim();
@@ -1334,6 +1378,7 @@ document.addEventListener("change", e => {
   if (t.id === "fb") store.set("fb", t.value);
 });
 document.addEventListener("input", e => { const t = e.target; if (t.dataset.place && t.id.endsWith("-city")) placeChanged(t.dataset.place, "city"); });
+document.addEventListener("change", e => { const t = e.target, m = /^(f|o|b|g)-(date|hh|mm|ap|lat|lon|tz)$/.exec(t.id || ""); if (m && $(`#${m[1]}-iana`)) placeChanged(m[1], m[2]); });
 document.addEventListener("submit", e => {
   e.preventDefault();
   if (e.target.id === "pform") return safeSave();

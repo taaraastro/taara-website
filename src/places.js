@@ -75,8 +75,49 @@ const PLACES = (() => {
   return out;
 })();
 const DST_COUNTRIES = new Set(["United States", "Canada", "United Kingdom", "Ireland", "France", "Germany", "Netherlands", "Australia", "New Zealand"]);
-const COUNTRIES = [...new Set(PLACES.map(p => p[2]))];
-const statesOf = c => [...new Set(PLACES.filter(p => p[2] === c).map(p => p[1]))].sort();
+/* ===== World places: every country, state and city (with its IANA time zone), loaded per country ===== */
+const WORLD_COUNTRIES = /*WORLD_COUNTRIES*/[];
+const IN_DATA = /*IN_DATA*/null;
+const PLACE_DATA = {};
+const CC_OF = Object.fromEntries(WORLD_COUNTRIES.map(w => [w[1], w[0]]));
+const PLACE_BASE = (typeof window !== "undefined" && window.TAARA_CONFIG && window.TAARA_CONFIG.placesBase) || "places/";
+PLACES.forEach(p => { if (p[2] === "India") p[6] = "Asia/Kolkata"; });
+function addCountryData(name, d) {
+  if (PLACE_DATA[name]) return; PLACE_DATA[name] = d;
+  const cur = new Map(PLACES.filter(p => p[2] === name).map(p => [norm(p[0]) + "|" + p[1], p]));
+  for (const [n, si, lat, lon, zi] of d.c) {
+    const st = d.s[si], k = norm(n) + "|" + st, have = cur.get(k);
+    if (have) { if (!have[6]) have[6] = d.z[zi]; continue; }
+    const row = [n, st, name, lat, lon, null, d.z[zi]]; cur.set(k, row); PLACES.push(row);
+  }
+  PLACES.forEach(p => { if (p[2] === name && !p[6]) { const twin = PLACES.find(q => q[2] === name && q[6] && norm(q[0]) === norm(p[0])); p[6] = twin ? twin[6] : ""; } });
+}
+const PLACE_LOADING = {};
+function loadCountry(name) {
+  if (PLACE_DATA[name]) return Promise.resolve(true);
+  const cc = CC_OF[name]; if (!cc || typeof fetch === "undefined") return Promise.resolve(false);
+  return PLACE_LOADING[name] || (PLACE_LOADING[name] = fetch(PLACE_BASE + cc + ".json").then(r => r.ok ? r.json() : null).then(d => { if (d) addCountryData(name, d); return !!d; }).catch(() => false));
+}
+let BIG_CITIES = null, BIG_LOADING = null;
+function loadBig() {
+  if (BIG_CITIES) return Promise.resolve(BIG_CITIES);
+  if (typeof fetch === "undefined") return Promise.resolve(null);
+  return BIG_LOADING || (BIG_LOADING = fetch(PLACE_BASE + "_big.json").then(r => r.ok ? r.json() : null).then(d => (BIG_CITIES = d)).catch(() => null));
+}
+const COUNTRIES = WORLD_COUNTRIES.length ? ["India", ...WORLD_COUNTRIES.map(w => w[1]).filter(n => n !== "India")] : [...new Set(PLACES.map(p => p[2]))];
+const statesOf = c => [...new Set([...(PLACE_DATA[c] ? PLACE_DATA[c].a : []), ...PLACES.filter(p => p[2] === c).map(p => p[1])])].filter(Boolean).sort();
+/* UTC offset in hours for an IANA zone at a local date and time (handles DST and historical changes, e.g. India's +6:30 war time) */
+function tzOffset(zone, date, time) {
+  try {
+    const [y, m, d] = String(date || new Date().toISOString().slice(0, 10)).split("-").map(Number), [hh, mm] = String(time || "12:00").split(":").map(Number);
+    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+    const offAt = ms => { const o = {}; fmt.formatToParts(new Date(ms)).forEach(x => o[x.type] = +x.value); const dt = new Date(0); dt.setUTCFullYear(o.year, o.month - 1, o.day); dt.setUTCHours(o.hour % 24, o.minute, o.second, 0); return (dt.getTime() - ms) / 36e5; };
+    const g = new Date(0); g.setUTCFullYear(y, m - 1, d); g.setUTCHours(hh, mm, 0, 0); const local = g.getTime();
+    let off = offAt(local); off = offAt(local - off * 36e5);
+    return Math.round(off * 60) / 60;
+  } catch (e) { return NaN; }
+}
+const placeTz = (rec, date, time) => rec && rec[6] ? tzOffset(rec[6], date, time) : (rec ? rec[5] : NaN);
 const citiesOf = (c, s) => PLACES.filter(p => p[2] === c && (!s || p[1] === s));
 const norm = s => String(s || "").toLowerCase().replace(/\(.*?\)/g, "").replace(/[^a-z]/g, "");
 const ALIAS = { bangalore: "Bengaluru", bombay: "Mumbai", calcutta: "Kolkata", madras: "Chennai", gurgaon: "Gurugram", mysore: "Mysuru", mangalore: "Mangaluru", trivandrum: "Thiruvananthapuram", cochin: "Kochi", ernakulam: "Kochi", calicut: "Kozhikode", poona: "Pune", baroda: "Vadodara", benares: "Varanasi", banaras: "Varanasi", kashi: "Varanasi", allahabad: "Prayagraj", pondicherry: "Puducherry", vizag: "Visakhapatnam", hubli: "Hubballi", belgaum: "Belagavi", gulbarga: "Kalaburagi", shimoga: "Shivamogga", tumkur: "Tumakuru", trichy: "Tiruchirappalli", tuticorin: "Thoothukudi", faizabad: "Ayodhya", delhi: "New Delhi", newyork: "New York City", nyc: "New York City", bhubneshwar: "Bhubaneswar", vishakhapatnam: "Visakhapatnam", rajamahendravaram: "Rajahmundry", panjim: "Panaji", sambhajinagar: "Chhatrapati Sambhajinagar (Aurangabad)", gauhati: "Guwahati", simla: "Shimla", mohali: "Mohali" };
@@ -86,3 +127,4 @@ function findPlace(city, state, country) {
   const match = p => norm(p[0]) === n || p[0].toLowerCase().includes("(" + String(city).toLowerCase().trim() + ")");
   return PLACES.find(p => p[2] === country && p[1] === state && match(p)) || PLACES.find(p => p[2] === country && match(p)) || (country ? null : PLACES.find(match));
 }
+if (IN_DATA) addCountryData("India", IN_DATA);

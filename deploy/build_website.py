@@ -19,7 +19,10 @@ name = cfg.get("brand", "Spatik Astro")
 # ---------- 1. the app ----------
 shell = (SRC / "shell.html").read_text(encoding="utf-8")
 engine = (SRC / "engine.js").read_text(encoding="utf-8").replace('if (typeof module !== "undefined") module.exports = Astro;', "")
+def inline_places(js, pdir):
+    return js.replace("/*WORLD_COUNTRIES*/[]", (pdir / "_countries.json").read_text(encoding="utf-8")).replace("/*IN_DATA*/null", (pdir / "IN.json").read_text(encoding="utf-8"))
 parts = "\n".join((SRC / f).read_text(encoding="utf-8") for f in ["places.js", "langs.js", "insight.js", "revenue.js", "voice.js", "app.js"])
+parts = inline_places(parts, SRC / "places")
 app_cfg = {k: cfg[k] for k in ["contact", "freeQuestions", "payLinks", "adsense", "voiceProxy", "feedbackUrl", "lockDates"] if k in cfg}
 title = f"{name}: Free Kundli & AI Astrology App in Indian Languages | Low-Cost Vedic Astrologer"
 desc = ("Free Janam Kundli, daily rashifal, Kundli matching and an AI Vedic astrologer that answers with exact dasha dates, "
@@ -53,6 +56,7 @@ if DOCS.exists():
         shutil.rmtree(p) if p.is_dir() else p.unlink()
 DOCS.mkdir(exist_ok=True)
 (DOCS / "index.html").write_text(page, encoding="utf-8")
+shutil.copytree(SRC / "places", DOCS / "places", ignore=shutil.ignore_patterns("IN.json"))
 
 # ---------- 2. legal and info pages ----------
 contact = html.escape(cfg.get("contact", ""))
@@ -73,6 +77,7 @@ info("about", f"About {name}", f"""
 <p>{name} is a free Vedic astrology app for India. It makes your Janam Kundli, daily rashifal, Panchang and 36-guna Kundli matching, and its AI astrologer answers questions about career, marriage, money, health and family from your own chart, with exact Vimshottari dasha dates.</p>
 <p>Calculations run on standard astronomical models with the Lahiri ayanamsa. {name} answers in English, Hinglish and 35 Indian languages, in writing and by voice.</p>
 <p>Astrology is offered for guidance and self-reflection. {name} does not replace medical, legal or financial advice.</p>
+<p>Birth places cover every country, state and about 171,000 cities, with time zones worked out for the exact birth date. Place data comes from the <a href="https://github.com/dr5hn/countries-states-cities-database">Countries States Cities Database</a> under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License</a>; our derived place files are available under the same licence at <a href="/places/LICENSE.txt">/places</a>.</p>
 <p>{name} is run by {owner}.</p>""", f"What {name} is and who runs it.")
 info("contact", "Contact us", f"""
 <p>Questions, payment help or feedback: {contact}{' · Email: <a href="mailto:' + email + '">' + email + '</a>' if email else ''}.</p>
@@ -127,7 +132,7 @@ def icon(size, pad, path):
     d.line([pts[5], (c, c - h * .2), pts[1]], fill=(255, 255, 255, 200), width=lw); d.line([(c, c - h * .2), pts[3]], fill=(255, 255, 255, 160), width=lw)
     im.save(DOCS / "icons" / path)
 icon(512, 40, "icon-512.png"); icon(192, 15, "icon-192.png"); icon(512, 110, "maskable-512.png"); icon(64, 4, "favicon.png")
-(DOCS / "sw.js").write_text("""const CACHE = "spatik-v3";
+(DOCS / "sw.js").write_text("""const CACHE = "spatik-v4";
 const CORE = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
