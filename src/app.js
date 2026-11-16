@@ -1,4 +1,4 @@
-/* ===== Taara app ===== */
+/* ===== Spatik Astro app ===== */
 const A = Astro;
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -235,14 +235,16 @@ function renderNav() {
   const html = TABS.map(([k, en, hi]) => `<button class="tab${state.tab === k ? " on" : ""}" data-tab="${k}" aria-current="${state.tab === k ? "page" : "false"}"><span class="tab-hi" lang="hi">${hi}</span><span>${en}</span></button>`).join("");
   $("#tabs").innerHTML = html;
   const sel = profiles().map((p, i) => `<option value="${i}"${i === state.active ? " selected" : ""}>${esc(p.name)}${p.example ? " (example)" : ""}</option>`).join("");
-  $("#who").innerHTML = `<label class="sr" for="profile-select">Profile</label><select id="profile-select">${sel}</select><button class="btn ghost sm" id="add-profile">+ Add person</button>`;
+  $("#who").innerHTML = hasReal() ? `<label class="sr" for="profile-select">Profile</label><select id="profile-select">${sel}</select><button class="btn ghost sm" id="add-profile">+ Add person</button>` : `<button class="btn sm" data-act="start">Get free Kundli</button>`;
 }
+const hasReal = () => state.profiles.length > 0;
 function render() {
   renderNav();
   const v = $("#view");
-  if (state.tab === "today") v.innerHTML = viewToday();
-  if (state.tab === "kundli") v.innerHTML = viewKundli();
-  if (state.tab === "ask") { v.innerHTML = viewAsk(); scrollChat(); }
+  if (!hasReal() && ["today", "kundli", "ask"].includes(state.tab)) v.innerHTML = viewWelcome();
+  else if (state.tab === "today") v.innerHTML = viewToday();
+  else if (state.tab === "kundli") v.innerHTML = viewKundli();
+  else if (state.tab === "ask") { v.innerHTML = viewAsk(); scrollChat(); }
   if (state.tab === "match") v.innerHTML = viewMatch();
   if (state.tab === "plus") v.innerHTML = viewPlus();
   try { if (location.hash.slice(1) !== state.tab) history.replaceState(null, "", "#" + state.tab); } catch (e) {}
@@ -254,6 +256,73 @@ function exampleBanner(p) {
 function meter(label, v) {
   const lvl = v >= 68 ? "good" : v >= 45 ? "warn" : "bad";
   return `<div class="meter"><div class="meter-top"><span>${label}</span><span class="num">${v}</span></div><div class="bar"><i class="${lvl}" style="width:${v}%"></i></div></div>`;
+}
+
+/* ---------- Welcome: first visit, no example data, just the birth form ---------- */
+const ZOD = "♈♉♊♋♌♍♎♏♐♑♒♓";
+function heroArt() {
+  const pt = (r, a) => [300 + r * Math.cos((a - 90) * Math.PI / 180), 300 + r * Math.sin((a - 90) * Math.PI / 180)].map(n => n.toFixed(1));
+  const spokes = Array.from({ length: 12 }, (_, i) => { const [x1, y1] = pt(118, i * 30), [x2, y2] = pt(272, i * 30); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`; }).join("");
+  const glyphs = [...ZOD].map((g, i) => { const [x, y] = pt(244, i * 30 + 15); return `<text x="${x}" y="${y}">${g}︎</text>`; }).join("");
+  const ticks = Array.from({ length: 72 }, (_, i) => { const [x1, y1] = pt(272, i * 5), [x2, y2] = pt(i % 6 ? 279 : 286, i * 5); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`; }).join("");
+  const spark = (x, y, r, o) => `<path d="M${x} ${y - r}L${x + r * .22} ${y - r * .22}L${x + r} ${y}L${x + r * .22} ${y + r * .22}L${x} ${y + r}L${x - r * .22} ${y + r * .22}L${x - r} ${y}L${x - r * .22} ${y - r * .22}Z" opacity="${o}"/>`;
+  return `<svg class="wart" viewBox="0 0 600 600" aria-hidden="true" focusable="false">
+  <defs>
+    <radialGradient id="wglow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#c9f3ff" stop-opacity=".75"/><stop offset=".22" stop-color="#58c4ff" stop-opacity=".32"/><stop offset=".6" stop-color="#2a5bd7" stop-opacity=".12"/><stop offset="1" stop-color="#0a1630" stop-opacity="0"/></radialGradient>
+    <linearGradient id="wcrys" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2fcff"/><stop offset=".45" stop-color="#9fe2ff"/><stop offset="1" stop-color="#6a7dff"/></linearGradient>
+  </defs>
+  <circle cx="300" cy="300" r="300" fill="url(#wglow)"/>
+  <g class="spin" fill="none" stroke="#9fdcff" stroke-opacity=".45" stroke-width="1.2">
+    <circle cx="300" cy="300" r="286"/><circle cx="300" cy="300" r="272"/><circle cx="300" cy="300" r="216"/><circle cx="300" cy="300" r="118"/>
+    <g stroke-opacity=".5">${ticks}</g><g stroke-opacity=".3">${spokes}</g>
+    <g class="zg" fill="#cdeeff" fill-opacity=".85" stroke="none">${glyphs}</g>
+  </g>
+  <g class="spin rev" fill="none" stroke="#bfeaff" stroke-opacity=".35"><polygon points="${[0, 1, 2, 3, 4, 5].map(i => pt(170, i * 60).join(",")).join(" ")}"/><polygon points="${[0, 1, 2, 3, 4, 5].map(i => pt(170, i * 60 + 30).join(",")).join(" ")}"/></g>
+  <g class="crys" opacity=".6">
+    <polygon points="300,196 344,236 344,350 300,404 256,350 256,236" fill="url(#wcrys)" opacity=".95"/>
+    <g fill="none" stroke="#ffffff" stroke-opacity=".7" stroke-width="1.2"><polyline points="256,236 300,262 344,236"/><line x1="300" y1="262" x2="300" y2="404"/><polyline points="256,350 300,330 344,350" stroke-opacity=".35"/><line x1="300" y1="196" x2="300" y2="262" stroke-opacity=".4"/></g>
+    <polygon points="300,196 344,236 300,262 256,236" fill="#ffffff" opacity=".55"/>
+  </g>
+  <g fill="#ffffff">${spark(470, 110, 14, .9)}${spark(118, 128, 9, .8)}${spark(486, 170, 12, .85)}${spark(470, 448, 8, .7)}${spark(142, 462, 11, .75)}${spark(388, 88, 6, .7)}${spark(60, 300, 6, .6)}${spark(548, 318, 7, .6)}</g>
+</svg>`;
+}
+const FEATS = [
+  ["kundli", "Janam Kundli", "जन्म कुंडली", "North and South Indian charts, yogas, doshas and your full dasha timeline.", '<rect x="4" y="4" width="24" height="24" rx="2"/><path d="M4 4l24 24M28 4L4 28M16 4L4 16l12 12 12-12z"/>'],
+  ["today", "Daily rashifal", "दैनिक राशिफल", "Your day score for love, career, money and health, with Panchang and Rahu Kaal.", '<circle cx="16" cy="16" r="6"/><path d="M16 2v5M16 25v5M2 16h5M25 16h5M6 6l3.5 3.5M22.5 22.5L26 26M26 6l-3.5 3.5M9.5 22.5L6 26"/>'],
+  ["ask", "Ask the astrologer", "प्रश्न पूछें", "Career, marriage, children, health: answers from your chart with exact dates.", '<path d="M5 6h22v15H14l-6 5v-5H5z"/><path d="M11 12h10M11 16h6"/>'],
+  ["match", "Kundli milan", "गुण मिलान", "36-guna matching with Mangal, Nadi and Bhakoot dosha checks.", '<circle cx="12" cy="17" r="7"/><circle cx="20" cy="17" r="7"/><path d="M13 6l3-3 3 3"/>'],
+];
+function viewWelcome() {
+  const t = state.tab;
+  const title = t === "ask" ? "Tell us your birth details to start asking" : t === "kundli" ? "Enter birth details to draw your Kundli" : "Get your free Kundli";
+  const blank = { name: "", gender: "", date: "", time: "", place: "", country: "India", state: "", city: "" };
+  return `${invitedBanner()}
+  <section class="welcome">
+    <div class="whero">${heroArt()}
+      <p class="wbrand">SPATIK ASTRO</p>
+      <h1>Crystal-clear astrology<br>in your language</h1>
+      <p class="lede">Free Janam Kundli, daily rashifal and an AI astrologer that reads your own chart and answers with exact dates.</p>
+      <ul class="trust"><li>Free Kundli</li><li>${LANGS.length - 2} Indian languages</li><li>${CFG.freeQuestions ?? 5} free questions</li><li>Private to you</li></ul>
+    </div>
+    <section class="card startcard" aria-labelledby="ftitle">
+      <h2 id="ftitle">${title}</h2>
+      <form id="pform" novalidate>${formFields(blank, false)}
+        <p class="err" id="f-err" role="alert"></p>
+        <button class="btn big" type="button" data-act="save-profile">Show my Kundli</button>
+        <p class="note center">Takes 20 seconds. Your details stay on this device.</p>
+      </form>
+    </section>
+  </section>
+  <section class="feats" aria-label="What you get">${FEATS.map(([k, en, hi, txt, ic]) => `<button class="feat" type="button" ${k === "match" ? 'data-tab="match"' : `data-act="start" data-then="${k}"`}><svg viewBox="0 0 32 32" aria-hidden="true">${ic}</svg><b>${en}</b><span class="hi" lang="hi">${hi}</span><span class="ftxt">${txt}</span></button>`).join("")}</section>
+  <ol class="steps"><li><b>Enter birth details</b><span>Date, time and place of birth.</span></li><li><b>See your chart and today</b><span>Kundli, dasha and day score in seconds.</span></li><li><b>Ask anything</b><span>Type or speak in your own language.</span></li></ol>`;
+}
+function startHere(then) {
+  if (then) state.after = then;
+  if (hasReal()) { if (then) { state.tab = then; render(); window.scrollTo(0, 0); } return; }
+  if (!$("#pform") || !$("#modal").hidden) { closeForm(); if (!["today", "kundli", "ask"].includes(state.tab)) state.tab = "today"; render(); }
+  const el = $("#f-name"); if (!el) return;
+  try { $(".startcard").scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+  setTimeout(() => el.focus({ preventScroll: true }), 250);
 }
 
 /* ---------- Today ---------- */
@@ -488,7 +557,7 @@ const SUGGEST = ["When will I get a new job?", "When will I get married?", "Will
 function viewAsk() {
   const p = prof(), ai = !!state.sample;
   const Lc = state.lang === "auto" ? null : LANG[state.lang];
-  const msgs = state.chat.length ? state.chat : [{ role: "assistant", content: `${Lc ? Lc.hello : "Namaste"} ${p.name}. I am Taara${Lc && Lc.code !== "en" ? `, your ${Lc.name} astrologer (${Lc.native})` : ""}. ${hookLine(chartOf(p), p, true, true)}\nAsk me anything about career, marriage, money, health, studies or family. I read your Kundli down to the Sukshma dasha and answer with **exact windows**, your **power days** and a **personal plan**.${state.lang === "auto" ? "\nWrite in any Indian language and I will reply in it." : ""}` }];
+  const msgs = state.chat.length ? state.chat : [{ role: "assistant", content: `${Lc ? Lc.hello : "Namaste"} ${p.name}. I am Spatik${Lc && Lc.code !== "en" ? `, your ${Lc.name} astrologer (${Lc.native})` : ""}. ${hookLine(chartOf(p), p, true, true)}\nAsk me anything about career, marriage, money, health, studies or family. I read your Kundli down to the Sukshma dasha and answer with **exact windows**, your **power days** and a **personal plan**.${state.lang === "auto" ? "\nWrite in any Indian language and I will reply in it." : ""}` }];
   const langOpts = `<option value="auto"${state.lang === "auto" ? " selected" : ""}>Auto: reply in the language I type</option>` + [["s", "Official Indian languages"], ["o", "More Indian languages"], ["e", "English"]].map(([g, lab]) => `<optgroup label="${lab}">${LANGS.filter(l => l.group === g).map(l => `<option value="${l.code}"${state.lang === l.code ? " selected" : ""}>${l.native === l.name ? l.name : `${l.native} · ${l.name}`}</option>`).join("")}</optgroup>`).join("");
   return `${exampleBanner(p)}
   <section class="card chatcard">
@@ -844,10 +913,10 @@ async function answerFor(q, sub) {
   const msg = { role: "assistant", content: "Reading the chart…", locked: lock };
   state.chat.push(msg); state.aiBusy = true; render();
   const yn = isYesNo(q), other = !!sub.profile;
-  const sys = `You are Taara, a warm, precise Vedic astrologer inside an astrology app. Use ONLY the computed chart data below (sidereal, Lahiri, whole-sign houses, Vimshottari dasha). Never invent planet positions.
+  const sys = `You are Spatik, a warm, precise Vedic astrologer inside an astrology app. Use ONLY the computed chart data below (sidereal, Lahiri, whole-sign houses, Vimshottari dasha). Never invent planet positions.
 ${other ? `This question is about ${p.name}, the user's ${(p.relation || "relative").toLowerCase()}. The chart below is ${p.name}'s own chart. Talk about ${p.name} by name and use only this chart; do not mix in the user's own chart.\n` : ""}If the user asks about another person whose chart is not given below, do not answer from this chart. Ask for that person's name, date of birth, time of birth and place of birth instead.
 LANGUAGE: ${agentLine(L, state.lang === "auto")}
-STYLE (this is what makes Taara special): Write like a wise, warm family astrologer who knows ${other ? p.name : "this person"} deeply. Every answer must feel written for this one chart, never generic. Use this structure:
+STYLE (this is what makes Spatik Astro special): Write like a wise, warm family astrologer who knows ${other ? p.name : "this person"} deeply. Every answer must feel written for this one chart, never generic. Use this structure:
 1. One-line personal hook using the name and one striking item from SIGNATURE (birth-star deity or gift, a yoga, or the power planet).
 2. The direct answer in one or two sentences.
 3. Why: 2-3 reasons naming the houses, lords and running dasha.
@@ -914,9 +983,9 @@ function savePending() {
 
 /* ---------- Match ---------- */
 function personFields(pre, who) {
-  const opts = profiles().map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("");
+  const opts = state.profiles.map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("");
   return `<fieldset class="person"><legend>${who === "b" ? "Groom" : "Bride"}</legend>
-    <label for="${who}-pick">Fill from saved</label><select id="${who}-pick" data-pick="${who}"><option value="">Choose a profile</option>${opts}</select>
+    ${hasReal() ? `<label for="${who}-pick">Fill from saved</label><select id="${who}-pick" data-pick="${who}"><option value="">Choose a profile</option>${opts}</select>` : ""}
     <label for="${who}-name">Name</label><input id="${who}-name" value="${esc(pre.name)}">
     <div class="two"><div><label for="${who}-date">Date of birth</label><input type="date" id="${who}-date" value="${pre.date}"></div>
     <div>${timeFields(who, pre.time, "Time of birth")}</div></div>
@@ -933,9 +1002,23 @@ function computeMatch(b, g) {
 }
 function viewMatch() {
   if (!state.match) {
-    const p = prof();
-    const b = p.gender === "F" ? EXAMPLE : p, g = p.gender === "F" ? p : (profiles().find(x => x.gender === "F") || EXAMPLE_PARTNER);
-    state.match = computeMatch(b, g);
+    const real = state.profiles, me = hasReal() ? prof() : null;
+    const blank = { name: "", date: "", time: "", country: "India" };
+    const other = me ? real.find(x => x !== me && x.gender && x.gender !== me.gender && ["F", "M"].includes(x.gender)) : null;
+    if (me && other && ["F", "M"].includes(me.gender)) state.match = computeMatch(me.gender === "M" ? me : other, me.gender === "M" ? other : me);
+    else {
+      const b = me && me.gender !== "F" ? me : blank, g = me && me.gender === "F" ? me : blank;
+      return `<div class="grid">
+  <section class="card">
+    <h2>Kundli matching <span class="hi" lang="hi">गुण मिलान</span></h2>
+    <form id="matchform" novalidate>${personFields(b, "b")}${personFields(g, "g")}<button class="btn" type="button" data-act="match">Match kundlis</button></form>
+  </section>
+  <section class="card matchwait">
+    <div class="score-ring" style="--v:0"><div><span class="big num">?</span><span class="small">of 36 gunas</span></div></div>
+    <h3>Your guna score appears here</h3>
+    <p class="muted">Enter the birth details of both people and tap <b>Match kundlis</b>. You get all 8 kootas, Mangal dosha, Nadi and Bhakoot checks, free.</p>
+  </section></div>`;
+    }
   }
   const { b, g, cb, cg, r } = state.match;
   const v = r.total, lvl = v >= 25 ? "good" : v >= 18 ? "warn" : "bad";
@@ -1000,7 +1083,7 @@ function viewPlus() {
   <p class="note center" id="soon-msg" role="status"></p>
   <div class="grid">
     <section class="card">
-      <h2>Rate Taara</h2>
+      <h2>Rate Spatik Astro</h2>
       <p class="muted">Your ratings shape what we build next.</p>
       <div class="rate">${PARAMS.map((pr, i) => `<div class="rate-row"><span>${pr}</span><span class="stars" role="radiogroup" aria-label="${pr}">${[1, 2, 3, 4, 5].map(n => `<button role="radio" aria-checked="${ratings[pr] === n}" aria-label="${n} star${n > 1 ? "s" : ""}" class="star${ratings[pr] >= n ? " on" : ""}" data-rate="${pr}" data-n="${n}">★</button>`).join("")}</span></div>`).join("")}</div>
       ${rated.length ? `<p class="avg">Your average: <b class="num">${(rated.reduce((a, b) => a + b, 0) / rated.length).toFixed(1)}</b> / 5</p>` : ""}
@@ -1010,14 +1093,14 @@ function viewPlus() {
     ${referralCard()}
     <section class="card">
       <h2>Start as a new person</h2>
-      <p class="muted">Erase everything Taara has saved on this device and see the app the way a first-time visitor does.</p>
+      <p class="muted">Erase everything Spatik Astro has saved on this device and see the app the way a first-time visitor does.</p>
       <div class="row-actions"><button class="btn ghost danger" data-act="fresh">Start as a new person</button></div>
     </section>
     <section class="card">
-      <h2>Share Taara</h2>
+      <h2>Share Spatik Astro</h2>
       <p>Free Kundli, daily horoscope and timed answers. Invite your family and friends.</p>
       <div class="row-actions"><button class="btn" data-act="share-app">Copy invite message</button><span class="copied" id="copied-app" role="status"></span></div>
-      <h2 class="mt">How Taara calculates</h2>
+      <h2 class="mt">How Spatik Astro calculates</h2>
       <p class="muted">Planet positions are computed on your device with standard orbital models (accurate to a few arc-minutes), converted to the sidereal zodiac with the Lahiri ayanamsa used by the Indian government's Rashtriya Panchang. Houses are whole-sign from the Lagna. Dashas follow the Vimshottari system. Astrology is a tool for reflection and guidance.</p>
     </section>
   </div>`;
@@ -1030,7 +1113,7 @@ function timeFields(px, val, label) {
   const hrs = Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}"${n === h ? " selected" : ""}>${n}</option>`).join("");
   const mins = Array.from({ length: 60 }, (_, i) => i).map(n => `<option value="${n}"${n === m ? " selected" : ""}>${String(n).padStart(2, "0")}</option>`).join("");
   return `<div class="tpick-wrap"><span class="lbl" id="${px}-tlabel">${label}</span><div class="tpick" role="group" aria-labelledby="${px}-tlabel">
-    <label class="sr" for="${px}-hh">Hour</label><select id="${px}-hh"><option value="">Hour</option>${hrs}</select>
+    <label class="sr" for="${px}-hh">Hour</label><select id="${px}-hh"><option value="">Hr</option>${hrs}</select>
     <label class="sr" for="${px}-mm">Minute</label><select id="${px}-mm"><option value=""${m === "" ? " selected" : ""}>Min</option>${mins}</select>
     <label class="sr" for="${px}-ap">AM or PM</label><select id="${px}-ap"><option${ap === "AM" ? " selected" : ""}>AM</option><option${ap === "PM" ? " selected" : ""}>PM</option></select>
   </div></div>`;
@@ -1047,20 +1130,25 @@ function setTime(px, val) {
   $(`#${px}-hh`).value = String((H % 12) || 12); $(`#${px}-mm`).value = String(M); $(`#${px}-ap`).value = H >= 12 ? "PM" : "AM";
 }
 
-/* ---------- profile modal ---------- */
+/* ---------- profile form (inline on first visit, modal later) ---------- */
+const RELS_LIST = ["Self", "Son", "Daughter", "Wife", "Husband", "Partner", "Mother", "Father", "Brother", "Sister", "Friend", "Other"];
+function formFields(p, withRel) {
+  const g = p.gender || "";
+  return `<label for="f-name">Full name</label><input id="f-name" value="${esc(p.name)}" placeholder="e.g. Priya Sharma" autocomplete="name">
+      <div class="${withRel ? "two" : "one"}"><div><span class="lbl" id="f-glabel">Gender</span><input type="hidden" id="f-gender" value="${g}">
+        <div class="seg gsel" role="group" aria-labelledby="f-glabel">${[["F", "Female"], ["M", "Male"], ["O", "Other"]].map(([v, l]) => `<button type="button" data-gsel="${v}" aria-pressed="${g === v}"${g === v ? ' class="on"' : ""}>${l}</button>`).join("")}</div></div>
+      ${withRel ? `<div><label for="f-rel">Relation to you</label><select id="f-rel">${RELS_LIST.map(r => `<option${(p.relation || "Self") === r ? " selected" : ""}>${r}</option>`).join("")}</select></div>` : `<input type="hidden" id="f-rel" value="Self">`}</div>
+      <div class="two"><div><label for="f-date">Date of birth</label><input type="date" id="f-date" value="${p.date}" max="${todayStr()}"></div>
+      <div>${timeFields("f", p.unknownTime ? "" : p.time, "Time of birth")}</div></div>
+      <label class="check"><input type="checkbox" id="f-unknown"${p.unknownTime ? " checked" : ""}> I don't know my birth time</label>
+      ${placeFields("f", p)}`;
+}
 function openForm(edit) {
   const p = edit ? prof() : { name: "", gender: "", date: "", time: "", place: "", country: "India", state: "", city: "" };
   $("#modal").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ftitle">
     <h2 id="ftitle">${edit ? "Edit birth details" : "Add birth details"}</h2>
     <p class="muted">Exact birth time gives an accurate Lagna and dasha dates. Your details stay on this device.</p>
-    <form id="pform" novalidate>
-      <label for="f-name">Name</label><input id="f-name" value="${esc(p.name)}" placeholder="Your name">
-      <label for="f-gender">Gender</label><select id="f-gender"><option value="">Prefer not to say</option><option value="F"${p.gender === "F" ? " selected" : ""}>Female</option><option value="M"${p.gender === "M" ? " selected" : ""}>Male</option></select>
-      <label for="f-rel">Relation to you</label><select id="f-rel">${["Self", "Son", "Daughter", "Wife", "Husband", "Partner", "Mother", "Father", "Brother", "Sister", "Friend", "Other"].map(r => `<option${(p.relation || "Self") === r ? " selected" : ""}>${r}</option>`).join("")}</select>
-      <div class="two"><div><label for="f-date">Date of birth</label><input type="date" id="f-date" value="${p.date}" max="${todayStr()}"></div>
-      <div>${timeFields("f", p.unknownTime ? "" : p.time, "Time of birth")}</div></div>
-      <label class="check"><input type="checkbox" id="f-unknown"${p.unknownTime ? " checked" : ""}> I don't know my birth time</label>
-      ${placeFields("f", p)}
+    <form id="pform" novalidate>${formFields(p, true)}
       <p class="err" id="f-err" role="alert"></p>
       <div class="row-actions"><button class="btn" type="button" data-act="save-profile">Save and see my chart</button><button class="btn ghost" type="button" data-act="close">Cancel</button>${edit && !p.example ? '<button class="btn ghost danger" type="button" data-act="delete">Delete</button>' : ""}</div>
     </form></div>`;
@@ -1095,7 +1183,7 @@ function startFresh() {
   chartCache.clear();
   for (const k in _hookCount) delete _hookCount[k];
   closeForm(); render(); window.scrollTo(0, 0);
-  setTimeout(() => openForm(false), 400);
+  setTimeout(() => startHere(), 300);
 }
 function closeForm() { $("#modal").hidden = true; $("#modal").innerHTML = ""; }
 /* ---------- birth place: country, state, city ---------- */
@@ -1110,16 +1198,16 @@ function placeFields(px, pre) {
   const hasCoords = pre.lat !== undefined && pre.lat !== "";
   const tzBase = hasCoords ? (+pre.tz - (pre.dst ? 1 : 0)) : "";
   return `<div class="placebox" id="${px}-placebox">
-    <div class="two">
-      <div><label for="${px}-country">Country</label><select id="${px}-country" data-place="${px}">${COUNTRIES.map(c => `<option${c === r.country ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
-      <div><label for="${px}-state">State / province</label><select id="${px}-state" data-place="${px}"><option value="">Choose state</option>${sts.map(s => `<option${s === st ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></div>
-    </div>
-    <label for="${px}-city">City / town of birth</label>
-    <input id="${px}-city" list="${px}-cities" data-place="${px}" value="${esc(r.city)}" placeholder="Type or choose your city" autocomplete="off">
+    <label for="${px}-city">Place of birth (city or town)</label>
+    <input id="${px}-city" list="${px}-cities" data-place="${px}" value="${esc(r.city)}" placeholder="Start typing: Mumbai, Patna, Madurai…" autocomplete="off">
     <datalist id="${px}-cities">${citiesOf(r.country, st).map(c => `<option value="${esc(c[0])}">`).join("")}</datalist>
-    <p class="note" id="${px}-pnote" role="status"></p>
-    <label class="check" id="${px}-dstwrap"${DST_COUNTRIES.has(r.country) ? "" : " hidden"}><input type="checkbox" id="${px}-dst"${pre.dst ? " checked" : ""}> Daylight saving time was on at birth</label>
-    <details><summary>Coordinates and time zone</summary>
+    <p class="note pnote" id="${px}-pnote" role="status"></p>
+    <details class="more"${r.country !== "India" ? " open" : ""}><summary>Born outside India, or town not listed?</summary>
+      <div class="two">
+        <div><label for="${px}-country">Country</label><select id="${px}-country" data-place="${px}">${COUNTRIES.map(c => `<option${c === r.country ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+        <div><label for="${px}-state">State / province</label><select id="${px}-state" data-place="${px}"><option value="">Choose state</option>${sts.map(s => `<option${s === st ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></div>
+      </div>
+      <label class="check" id="${px}-dstwrap"${DST_COUNTRIES.has(r.country) ? "" : " hidden"}><input type="checkbox" id="${px}-dst"${pre.dst ? " checked" : ""}> Daylight saving time was on at birth</label>
       <div class="three"><div><label for="${px}-lat">Latitude</label><input id="${px}-lat" type="number" step="0.001" value="${hasCoords ? pre.lat : ""}"></div><div><label for="${px}-lon">Longitude</label><input id="${px}-lon" type="number" step="0.001" value="${hasCoords ? pre.lon : ""}"></div><div><label for="${px}-tz">UTC offset</label><input id="${px}-tz" type="number" step="0.25" value="${tzBase}"></div></div>
       <p class="note">Filled in automatically from your city. Change them only if your town is not listed.</p>
     </details>
@@ -1142,7 +1230,7 @@ function placeChanged(px, which) {
   if (hit && sEl.value !== hit[1]) { sEl.value = hit[1]; $(`#${px}-cities`).innerHTML = citiesOf(country, hit[1]).map(c => `<option value="${esc(c[0])}">`).join(""); }
   if (!hit) ref = citiesOf(country, sEl.value)[0] || citiesOf(country)[0];
   if (ref) { $(`#${px}-lat`).value = ref[3]; $(`#${px}-lon`).value = ref[4]; $(`#${px}-tz`).value = ref[5]; }
-  if (hit) note.textContent = `${hit[0]}: ${Math.abs(hit[3]).toFixed(2)}°${hit[3] >= 0 ? "N" : "S"}, ${Math.abs(hit[4]).toFixed(2)}°${hit[4] >= 0 ? "E" : "W"}, UTC${hit[5] >= 0 ? "+" : ""}${hit[5]}`;
+  if (hit) note.textContent = `✓ ${hit[0]}, ${hit[1]}, ${hit[2]} · ${Math.abs(hit[3]).toFixed(2)}°${hit[3] >= 0 ? "N" : "S"}, ${Math.abs(hit[4]).toFixed(2)}°${hit[4] >= 0 ? "E" : "W"}`;
   else if (city && ref) note.textContent = `${city} is not in our list yet, so we are using ${ref[0]} (${ref[1]}). That is close enough for Moon sign and dashas. For an exact Lagna, enter your town's coordinates below.`;
   else note.textContent = "";
 }
@@ -1165,7 +1253,8 @@ function saveForm() {
   else { state.profiles.push(p); state.active = state.profiles.length - 1; }
   store.set("profiles", state.profiles); store.set("active", state.active);
   state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; state.openMd = null; state.openAd = null; state.openPd = null;
-  closeForm(); render();
+  if (state.after) { state.tab = state.after; state.after = null; }
+  closeForm(); render(); window.scrollTo(0, 0);
 }
 
 /* ---------- events ---------- */
@@ -1188,6 +1277,8 @@ document.addEventListener("click", e => {
   if (!t) return;
   if (t.dataset.tab) { state.tab = t.dataset.tab; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.goto) { if (!$("#modal").hidden) closeForm(); state.tab = t.dataset.goto; render(); window.scrollTo(0, 0); return; }
+  if (t.dataset.gsel !== undefined) { const f = t.closest("form") || document; f.querySelector("#f-gender").value = t.dataset.gsel; t.parentElement.querySelectorAll("button").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); return; }
+  if (t.dataset.act === "start" || ((t.id === "add-profile" || t.dataset.act === "add") && !hasReal())) return startHere(t.dataset.then);
   if (t.id === "add-profile" || t.dataset.act === "add") { if (kundliCount() >= kundliLimit()) return openLimit(); return openForm(false); }
   if (t.dataset.act === "redeem") { const el = $("#code"), out = $("#code-msg"); redeem(el.value).then(r => { out.textContent = r.msg; out.className = r.ok ? "copied" : "err"; if (r.ok) setTimeout(render, 1200); }); return; }
   if (t.dataset.act === "close") return closeForm();
@@ -1222,13 +1313,13 @@ document.addEventListener("click", e => {
   if (t.dataset.act === "print-report") { try { window.print(); } catch (e) {} return; }
   if (t.dataset.act === "share-invite") return copy(inviteText(), "copied-inv");
   if (t.dataset.act === "invite-dismiss") { store.set("inviteSeen", true); render(); return; }
-  if (t.dataset.act === "share-power") { const p = prof(), c = chartOf(p), cur = A.currentDasha(c, nowJ()); return copy(`My power days this month from Taara: ${powerDays(c, [cur.md.lord, cur.ad.lord, cur.pd.lord], 3).map(x => x.label).join(", ")}. Find yours free: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}`, "copied-pow"); }
+  if (t.dataset.act === "share-power") { const p = prof(), c = chartOf(p), cur = A.currentDasha(c, nowJ()); return copy(`My power days this month from Spatik Astro: ${powerDays(c, [cur.md.lord, cur.ad.lord, cur.pd.lord], 3).map(x => x.label).join(", ")}. Find yours free: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}`, "copied-pow"); }
   if (t.dataset.act === "soon") { { const el = $("#soon-msg"), m = `Online payment is opening soon. ${CONTACT}, and we will send you an activation code.`; if (el && !t.closest("#modal")) el.textContent = m; else { const box = document.createElement("p"); box.className = "note"; box.textContent = m; (t.closest(".lock") || t.parentElement).after(box); } } return; }
   if (t.dataset.act === "share-day") {
     const p = prof(), c = chartOf(p), d = dailyFor(c, todayStr(), deviceTz());
-    return copy(`${A.SIGNS[c.moonSign]} Moon · ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" })}\nDay score ${d.s.overall}/100\nLove ${d.s.love} · Career ${d.s.career} · Money ${d.s.money} · Health ${d.s.health}\n${d.text.career}\nLucky colour ${d.lucky.color}, number ${d.lucky.number}\nGet your free Kundli on Taara: ${location.href.split("#")[0]}`, "copied-day");
+    return copy(`${A.SIGNS[c.moonSign]} Moon · ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" })}\nDay score ${d.s.overall}/100\nLove ${d.s.love} · Career ${d.s.career} · Money ${d.s.money} · Health ${d.s.health}\n${d.text.career}\nLucky colour ${d.lucky.color}, number ${d.lucky.number}\nGet your free Kundli on Spatik Astro: ${location.href.split("#")[0]}`, "copied-day");
   }
-  if (t.dataset.act === "share-app") return copy(`I just checked my Kundli and today's horoscope on Taara. It's free, and the AI astrologer gives answers with real dates. Try it: ${location.href.split("#")[0]}`, "copied-app");
+  if (t.dataset.act === "share-app") return copy(`I just checked my Kundli and today's horoscope on Spatik Astro. It's free, and the AI astrologer gives answers with real dates. Try it: ${location.href.split("#")[0]}`, "copied-app");
 });
 document.addEventListener("change", e => {
   const t = e.target;
@@ -1236,7 +1327,7 @@ document.addEventListener("change", e => {
   if (t.id === "lang") { state.lang = t.value; store.set("lang", t.value); if (!state.chat.length) render(); else { const L = LANG[t.value]; state.chat.push({ role: "assistant", content: L ? `${L.hello}! From now on I will answer in **${L.name}** (${L.native}).` : "I will reply in the language you type in." }); render(); } if (LANG[t.value] && state.kstyle === null) store.set("kstyle", null); return; }
   if (t.id === "profile-select") { state.active = +t.value; store.set("active", state.active); state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; state.openMd = null; state.openAd = null; state.openPd = null; render(); }
   if (t.dataset.pick) {
-    const p = profiles()[+t.value]; if (!p) return; const w = t.dataset.pick;
+    const p = state.profiles[+t.value]; if (!p) return; const w = t.dataset.pick;
     $(`#${w}-name`).value = p.name; $(`#${w}-date`).value = p.date; setTime(w, p.time); $(`#${w}-placebox`).outerHTML = placeFields(w, p);
   }
   if (t.dataset.place) placeChanged(t.dataset.place, t.id.split("-").pop());

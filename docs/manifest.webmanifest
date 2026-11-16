@@ -1,13 +1,13 @@
 {
-  "name": "Taara Vedic Astrology",
-  "short_name": "Taara",
+  "name": "Spatik Astro: Vedic Astrology",
+  "short_name": "Spatik Astro",
   "description": "Free Janam Kundli, daily rashifal, Kundli matching and an AI Vedic astrologer that answers with exact dasha dates, in 35 Indian languages. First questions free, then from Rs 49.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0c1222",
-  "theme_color": "#0c1222",
+  "background_color": "#081127",
+  "theme_color": "#081127",
   "lang": "en-IN",
   "categories": [
     "lifestyle",

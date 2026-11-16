@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Taara website (GitHub Pages ready) from the app source and site.config.json.
+"""Build the Spatik Astro website (GitHub Pages ready) from the app source and site.config.json.
 
 Usage: python3 build_website.py            (reads site.config.json next to this file)
 Output: ../docs  (the folder GitHub Pages serves)  plus tools/ config for the daily rashifal pages.
@@ -14,7 +14,7 @@ DOCS = ROOT / "docs"
 TOOLS = ROOT / "tools"
 cfg = json.loads((HERE / "site.config.json").read_text(encoding="utf-8"))
 site = cfg["siteUrl"].rstrip("/")
-name = cfg.get("brand", "Taara")
+name = cfg.get("brand", "Spatik Astro")
 
 # ---------- 1. the app ----------
 shell = (SRC / "shell.html").read_text(encoding="utf-8")
@@ -29,9 +29,9 @@ jsonld = [
      "applicationCategory": "LifestyleApplication", "operatingSystem": "Web, Android", "inLanguage": ["en", "hi", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"],
      "description": desc, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "INR"}},
     {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
-        {"@type": "Question", "name": "Is Taara really free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Kundli, daily horoscope, Panchang, Kundli matching and your first questions to the AI astrologer are free. Extra questions start at Rs 49 for 15, with no subscription needed."}},
+        {"@type": "Question", "name": "Is Spatik Astro really free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Kundli, daily horoscope, Panchang, Kundli matching and your first questions to the AI astrologer are free. Extra questions start at Rs 49 for 15, with no subscription needed."}},
         {"@type": "Question", "name": "How accurate is the Kundli?", "acceptedAnswer": {"@type": "Answer", "text": "Planet positions are calculated with standard astronomical models and converted to the sidereal zodiac with the Lahiri ayanamsa. An exact birth time gives the most accurate Lagna and dasha dates."}},
-        {"@type": "Question", "name": "Which languages does Taara support?", "acceptedAnswer": {"@type": "Answer", "text": "English, Hinglish and 35 Indian languages. Type in your own script and Taara replies in the same language."}},
+        {"@type": "Question", "name": "Which languages does Spatik Astro support?", "acceptedAnswer": {"@type": "Answer", "text": "English, Hinglish and 35 Indian languages. Type in your own script and Spatik Astro replies in the same language."}},
         {"@type": "Question", "name": "Is my birth data safe?", "acceptedAnswer": {"@type": "Answer", "text": "Your birth details are stored on your own device."}}]},
 ]
 head = f"""<meta name="description" content="{html.escape(desc)}">
@@ -44,7 +44,7 @@ head = f"""<meta name="description" content="{html.escape(desc)}">
 <script>window.TAARA_CONFIG = {json.dumps(app_cfg, ensure_ascii=False)};</script>
 <script>if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {{}}));</script>
 """
-page = shell.replace("<title>Taara Vedic Astrology</title>", f"<title>{html.escape(title)}</title>").replace("<!--SEO_HEAD-->", head)
+page = shell.replace("<title>Spatik Astro</title>", f"<title>{html.escape(title)}</title>").replace("<!--SEO_HEAD-->", head)
 page = page.replace("/*ENGINE*/", engine).replace("/*PLACES*/\n/*APP*/", 'const CFG = (typeof window !== "undefined" && window.TAARA_CONFIG) || {};\n' + parts)
 if DOCS.exists():
     for p in DOCS.iterdir():          # keep the daily rashifal archive, rebuild everything else
@@ -106,8 +106,8 @@ info("refund", "Refund and cancellation policy", f"""
 
 # ---------- 3. PWA: manifest, icons, service worker (needed for the Play Store app) ----------
 (DOCS / "manifest.webmanifest").write_text(json.dumps({
-    "name": f"{name} Vedic Astrology", "short_name": name, "description": desc, "start_url": "/?source=pwa", "scope": "/",
-    "display": "standalone", "orientation": "portrait", "background_color": "#0c1222", "theme_color": "#0c1222", "lang": "en-IN",
+    "name": f"{name}: Vedic Astrology", "short_name": name, "description": desc, "start_url": "/?source=pwa", "scope": "/",
+    "display": "standalone", "orientation": "portrait", "background_color": "#081127", "theme_color": "#081127", "lang": "en-IN",
     "categories": ["lifestyle", "entertainment"],
     "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
               {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
@@ -115,14 +115,19 @@ info("refund", "Refund and cancellation policy", f"""
 from PIL import Image, ImageDraw
 (DOCS / "icons").mkdir(exist_ok=True)
 def icon(size, pad, path):
-    im = Image.new("RGBA", (size, size), (12, 18, 34, 255)); d = ImageDraw.Draw(im)
+    im = Image.new("RGBA", (size, size), (8, 17, 39, 255)); d = ImageDraw.Draw(im)
     c, r = size / 2, size / 2 - pad
-    d.ellipse([c - r, c - r, c + r, c + r], outline=(244, 169, 58, 255), width=max(2, size // 64))
-    s = r * 0.82, r * 0.17
-    d.polygon([(c, c - s[0]), (c + s[1], c - s[1]), (c + s[0], c), (c + s[1], c + s[1]), (c, c + s[0]), (c - s[1], c + s[1]), (c - s[0], c), (c - s[1], c - s[1])], fill=(244, 169, 58, 255))
+    d.ellipse([c - r, c - r, c + r, c + r], outline=(244, 181, 74, 255), width=max(2, size // 48))
+    h, w = r * 0.72, r * 0.42
+    pts = [(c, c - h), (c + w, c - h * .55), (c + w, c + h * .55), (c, c + h), (c - w, c + h * .55), (c - w, c - h * .55)]
+    d.polygon(pts, fill=(143, 220, 255, 255))
+    d.polygon([pts[0], pts[1], (c, c - h * .2), pts[5]], fill=(235, 250, 255, 255))
+    d.polygon([(c, c - h * .2), pts[1], pts[2], pts[3]], fill=(106, 140, 255, 255))
+    lw = max(1, size // 128)
+    d.line([pts[5], (c, c - h * .2), pts[1]], fill=(255, 255, 255, 200), width=lw); d.line([(c, c - h * .2), pts[3]], fill=(255, 255, 255, 160), width=lw)
     im.save(DOCS / "icons" / path)
 icon(512, 40, "icon-512.png"); icon(192, 15, "icon-192.png"); icon(512, 110, "maskable-512.png"); icon(64, 4, "favicon.png")
-(DOCS / "sw.js").write_text("""const CACHE = "taara-v1";
+(DOCS / "sw.js").write_text("""const CACHE = "spatik-v3";
 const CORE = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });

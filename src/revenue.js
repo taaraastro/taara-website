@@ -24,7 +24,7 @@ function trialBtn(label = `Start free ${TRIAL_DAYS}-day trial`) { return trialUs
 function isLocked(p) { return !!CFG.lockDates && planState().id === "free" && !!(store.get("freeFull", {})[p.id]); }
 function markFreeFull(p) { if (planState().id !== "free") return; const f = store.get("freeFull", {}); f[p.id] = true; store.set("freeFull", f); }
 function lockCard() {
-  return `<div class="lock"><b>Your exact dates are ready.</b> Your strongest windows, peak Sukshma days and power days are calculated. Unlock them with Taara Silver.<div class="row-actions">${trialBtn()}<button class="btn ghost sm" data-goto="plus">See plans</button></div></div>`;
+  return `<div class="lock"><b>Your exact dates are ready.</b> Your strongest windows, peak Sukshma days and power days are calculated. Unlock them with Spatik Silver.<div class="row-actions">${trialBtn()}<button class="btn ghost sm" data-goto="plus">See plans</button></div></div>`;
 }
 
 /* ---- reports ---- */
@@ -124,13 +124,13 @@ function openReport(key) {
 }
 function reportText(key) {
   const p = prof(), rep = buildReport(key, p);
-  return `${rep.title} for ${p.name}\n\n` + [...rep.free, ...rep.locked].map(s => `${s.h.toUpperCase()}\n${s.b.replace(/\*\*/g, "")}`).join("\n\n") + `\n\nTaara Vedic Astrology`;
+  return `${rep.title} for ${p.name}\n\n` + [...rep.free, ...rep.locked].map(s => `${s.h.toUpperCase()}\n${s.b.replace(/\*\*/g, "")}`).join("\n\n") + `\n\nSpatik Astro`;
 }
 
 /* ---- referrals ---- */
 function deviceId() { let d = store.get("device", ""); if (!d) { d = Math.random().toString(36).slice(2, 10); store.set("device", d); } return d; }
 const myRefCode = () => "TAARA-" + (hash("ref" + deviceId()) % 1679616).toString(36).toUpperCase().padStart(4, "0");
-function inviteText() { return `I use Taara for my Kundli: it gives exact dasha dates, power days and answers in ${LANGS.length - 2} Indian languages. Try it free, with a ${TRIAL_DAYS}-day free trial: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}\nMy invite code: ${myRefCode()}`; }
+function inviteText() { return `I use Spatik Astro for my Kundli: it gives exact dasha dates, power days and answers in ${LANGS.length - 2} Indian languages. Try it free, with a ${TRIAL_DAYS}-day free trial: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}\nMy invite code: ${myRefCode()}`; }
 function referralCard() {
   return `<section class="card">
     <h2>Invite friends, earn free months</h2>
@@ -142,7 +142,7 @@ function referralCard() {
 function invitedBanner() {
   const by = store.get("invitedBy", "");
   if (!by || store.get("inviteSeen", false) || trialUsed()) return "";
-  return `<div class="banner"><div><strong>A friend invited you to Taara.</strong> Start your free ${TRIAL_DAYS}-day Silver trial: exact dates, power days and 100 questions per kundli.</div><div class="row-actions">${trialBtn()}<button class="btn ghost sm" data-act="invite-dismiss">Later</button></div></div>`;
+  return `<div class="banner"><div><strong>A friend invited you to Spatik Astro.</strong> Start your free ${TRIAL_DAYS}-day Silver trial: exact dates, power days and 100 questions per kundli.</div><div class="row-actions">${trialBtn()}<button class="btn ghost sm" data-act="invite-dismiss">Later</button></div></div>`;
 }
 
 /* ---- "coming up for you" alerts ---- */

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Taara daily rashifal pages: one page per Moon sign per language per day, plus index pages and a sitemap.
+/* Spatik Astro daily rashifal pages: one page per Moon sign per language per day, plus index pages and a sitemap.
    Usage: node generate.js [--days 7] [--start 2026-11-16] [--out site]
    Settings: config.json (siteUrl, appUrl, langs). */
 const fs = require("fs"), path = require("path");
@@ -77,9 +77,9 @@ ${cfg.adsenseClient ? `<script async src="https://pagead2.googlesyndication.com/
 <link rel="icon" href="${cfg.siteUrl}/icons/favicon.png">
 </head>
 <body><main>
-<a class="brand" href="${cfg.siteUrl}/${lang}/">✦ Taara</a>
+<a class="brand" href="${cfg.siteUrl}/${lang}/">✦ Spatik Astro</a>
 ${body}
-<footer>Taara · Vedic astrology for guidance and reflection · <a href="${cfg.appUrl}">${lang === "hi" ? "निःशुल्क कुंडली" : "Free Kundli"}</a> · <a href="${cfg.siteUrl}/about.html">About</a> · <a href="${cfg.siteUrl}/privacy.html">Privacy</a> · <a href="${cfg.siteUrl}/terms.html">Terms</a> · <a href="${cfg.siteUrl}/contact.html">Contact</a></footer>
+<footer>Spatik Astro · Vedic astrology for guidance and reflection · <a href="${cfg.appUrl}">${lang === "hi" ? "निःशुल्क कुंडली" : "Free Kundli"}</a> · <a href="${cfg.siteUrl}/about.html">About</a> · <a href="${cfg.siteUrl}/privacy.html">Privacy</a> · <a href="${cfg.siteUrl}/terms.html">Terms</a> · <a href="${cfg.siteUrl}/contact.html">Contact</a></footer>
 </main></body></html>`;
 }
 const meter = (label, v) => `<div class="meter"><div class="mt"><span>${label}</span><span>${v}</span></div><div class="bar"><i class="${v >= 68 ? "good" : v >= 45 ? "warn" : "bad"}" style="width:${v}%"></i></div></div>`;
@@ -105,7 +105,7 @@ ${cfg.adsenseClient ? `<div class="card"><p class="muted" style="margin:0;font-s
 <section class="card cta"><p>${fill(t.cta, v)}</p><a class="btn" href="${cfg.appUrl}">${t.ctaBtn}</a></section>
 <section class="card"><h2>${t.other}</h2><div class="signs">${SLUG.map((s, i) => i === sign ? "" : `<a href="${cfg.siteUrl}/${lang}/rashifal/${s}/">${t.signs[i]}</a>`).join("")}</div></section>
 <section class="card"><h2>FAQ</h2><p><b>${fill(t.faqQ1, v)}</b><br>${t.faqA1}</p><p><b>${t.faqQ2}</b><br>${t.faqA2}</p></section>`;
-  const jsonld = [{ "@context": "https://schema.org", "@type": "Article", headline: fill(t.titleToday, v), datePublished: ds, dateModified: ds, inLanguage: lang, author: { "@type": "Organization", name: "Taara" }, publisher: { "@type": "Organization", name: "Taara" }, mainEntityOfPage: url },
+  const jsonld = [{ "@context": "https://schema.org", "@type": "Article", headline: fill(t.titleToday, v), datePublished: ds, dateModified: ds, inLanguage: lang, author: { "@type": "Organization", name: "Spatik Astro" }, publisher: { "@type": "Organization", name: "Spatik Astro" }, mainEntityOfPage: url },
     { "@context": "https://schema.org", "@type": "FAQPage", mainEntity: [{ "@type": "Question", name: fill(t.faqQ1, v), acceptedAnswer: { "@type": "Answer", text: t.faqA1 } }, { "@type": "Question", name: t.faqQ2, acceptedAnswer: { "@type": "Answer", text: t.faqA2 } }] }];
   const alternates = cfg.langs.map(l => ({ lang: l, href: `${cfg.siteUrl}/${l}/rashifal/${SLUG[sign]}/${isToday ? "" : ds + ".html"}` }));
   return shell({ lang, title: fill(t.titleToday, v), desc: fill(t.descToday, v), canonical: url, alternates, body, jsonld });
@@ -125,7 +125,7 @@ for (let d = 0; d < DAYS; d++) {
   for (const lang of cfg.langs) for (let s = 0; s < 12; s++) { write(`${lang}/rashifal/${SLUG[s]}/${ds}.html`, signPage(lang, s, ds, false)); n++; }
 }
 for (const lang of cfg.langs) { for (let s = 0; s < 12; s++) write(`${lang}/rashifal/${SLUG[s]}/index.html`, signPage(lang, s, START, true)); write(`${lang}/index.html`, indexPage(lang, START)); }
-if (!cfg.skipRoot) write("index.html", `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${cfg.siteUrl}/${cfg.langs[0]}/"><link rel="canonical" href="${cfg.siteUrl}/${cfg.langs[0]}/"><title>Taara Rashifal</title></head><body><a href="${cfg.siteUrl}/${cfg.langs[0]}/">Taara Rashifal</a></body></html>`);
+if (!cfg.skipRoot) write("index.html", `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${cfg.siteUrl}/${cfg.langs[0]}/"><link rel="canonical" href="${cfg.siteUrl}/${cfg.langs[0]}/"><title>Spatik Astro Rashifal</title></head><body><a href="${cfg.siteUrl}/${cfg.langs[0]}/">Spatik Astro Rashifal</a></body></html>`);
 // sitemap over everything on disk
 const urls = [];
 (function walk(dir) { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith(".html") && e.name !== "404.html" && !p.includes(`${path.sep}.`)) urls.push(path.relative(OUT, p).split(path.sep).join("/")); } })(OUT);

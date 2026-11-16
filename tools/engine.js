@@ -1,4 +1,4 @@
-/* ===== Taara Vedic engine (sidereal, Lahiri) ===== */
+/* ===== Spatika Astro Vedic engine (sidereal, Lahiri) ===== */
 const Astro = (() => {
   const R = Math.PI / 180;
   const n360 = x => ((x % 360) + 360) % 360;

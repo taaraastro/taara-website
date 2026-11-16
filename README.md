@@ -1,4 +1,4 @@
-# Taara website: launch guide
+# Spatik Astro website: launch guide
 
 This folder is a complete website, ready for GitHub Pages:
 - `docs/` is the live site: the app, legal pages, app icons, offline support, sitemap and daily rashifal pages.

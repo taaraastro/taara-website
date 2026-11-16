@@ -1,4 +1,4 @@
-/* ===== Language agents: one Taara astrologer per Indian language ===== */
+/* ===== Language agents: one Spatik Astro astrologer per Indian language ===== */
 /* code, English name, native name, script, greeting, chart style, group, local astrology terms (optional) */
 const LANGS = [
   // 22 languages of the Eighth Schedule
@@ -69,5 +69,5 @@ function agentLine(l, auto) {
 function agentBase(l) {
   if (l.code === "en") return "Reply in clear, warm English.";
   if (l.code === "hinglish") return "Reply in Hinglish: Hindi and English mixed in Latin script, the way Indians text each other.";
-  return `You are Taara's ${l.name} astrologer. Reply ENTIRELY in ${l.name} (${l.native}) written in ${l.script} script, the way a respected family astrologer from that community would speak: warm, respectful and natural, not a literal translation. ${l.terms ? `Use local astrology terms such as ${l.terms}. ` : "Use the astrology words people of this community actually use. "}Keep dates readable (day, month name, year). If a technical term has no common ${l.name} word, use the Sanskrit term in ${l.script} script.`;
+  return `You are Spatik's ${l.name} astrologer. Reply ENTIRELY in ${l.name} (${l.native}) written in ${l.script} script, the way a respected family astrologer from that community would speak: warm, respectful and natural, not a literal translation. ${l.terms ? `Use local astrology terms such as ${l.terms}. ` : "Use the astrology words people of this community actually use. "}Keep dates readable (day, month name, year). If a technical term has no common ${l.name} word, use the Sanskrit term in ${l.script} script.`;
 }
