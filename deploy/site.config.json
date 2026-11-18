@@ -28,6 +28,7 @@
   },
   "googleVerification": "",
   "voiceProxy": "",
+  "apiUrl": "https://spatik-api.spatikastro.workers.dev",
   "feedbackUrl": "",
   "rashifalLangs": [
     "en",

@@ -264,7 +264,7 @@ details summary { cursor: pointer; color: var(--saffron); font-size: .9rem; marg
 .rate { display: grid; gap: .35rem; }
 .rate-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .stars { display: inline-flex; }
-.star { background: none; border: 0; font-size: 1.45rem; color: var(--line); cursor: pointer; padding: 0 .1rem; line-height: 1; }
+.star { background: none; border: 0; font-size: 1.45rem; color: var(--line); cursor: pointer; padding: 0; line-height: 1; min-width: 34px; min-height: 34px; display: inline-grid; place-items: center; }
 .star.on { color: var(--saffron); }
 .avg b { font-family: var(--display); font-size: 1.3rem; color: var(--saffron); font-weight: 400; }
 
@@ -277,7 +277,7 @@ details summary { cursor: pointer; color: var(--saffron); font-size: .9rem; marg
 .seo summary { cursor: pointer; color: var(--text); }
 .admain { max-width: 1040px; margin: 0 auto; min-height: 120px; }
 /* welcome (first visit) */
-.welcome { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 2rem; align-items: center; padding: .6rem 0 .4rem; }
+.welcome { overflow-x: clip; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 2rem; align-items: center; padding: .6rem 0 .4rem; }
 .whero { position: relative; isolation: isolate; text-align: center; padding: 3.2rem 1rem; min-width: 0; }
 .wart { position: absolute; left: 50%; top: 50%; width: min(600px, 125%); height: auto; transform: translate(-50%, -50%); z-index: -1; pointer-events: none; }
 .wart .zg { font: 22px/1 "Segoe UI Symbol", "Noto Sans Symbols", "DejaVu Sans", sans-serif; text-anchor: middle; dominant-baseline: central; }
@@ -301,9 +301,49 @@ details summary { cursor: pointer; color: var(--saffron); font-size: .9rem; marg
 .gsel button { flex: 1; padding: .55rem .4rem; font-size: .92rem; }
 .gsel button + button { border-left: 1px solid var(--line); }
 .btn.big { width: 100%; padding: .85rem 1rem; font-size: 1.08rem; font-weight: 700; margin-top: .2rem; box-shadow: 0 8px 26px #f4a93a40; }
-.pnote:not(:empty) { color: var(--good); }
-details.more { border-top: 1px dashed var(--line); padding-top: .2rem; }
-details.more[open] { display: grid; gap: .5rem; }
+/* place of birth picker: two tabs, three searchable dropdowns each */
+.placebox { display: grid; gap: .5rem; border: 1px solid var(--line); border-radius: 14px; padding: .7rem .75rem .8rem; background: #0a1531; min-width: 0; }
+.placebox.invalid, .field-bad.placebox { border-color: var(--bad); box-shadow: 0 0 0 2px #ec6a5233; }
+.tpick-wrap.field-bad select, .gsel.field-bad { border-color: var(--bad); }
+input.field-bad { border-color: var(--bad); }
+.ptabs { display: grid; grid-template-columns: 1fr 1fr; background: #0b1736; border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 3px; }
+.ptabs [role=tab] { font: inherit; font-size: .93rem; color: var(--muted); background: none; border: 0; border-radius: 999px; padding: .5rem .4rem; min-height: 40px; cursor: pointer; }
+.ptabs [role=tab][aria-selected=true] { background: var(--saffron); color: var(--saffron-ink); font-weight: 600; }
+.ppanel { display: grid; gap: .45rem; min-width: 0; }
+.ppanel[hidden] { display: none; }
+.combo { position: relative; display: grid; gap: .25rem; min-width: 0; }
+.cbox { position: relative; }
+.cinput { padding-right: 2.6rem; text-overflow: ellipsis; }
+.cinput.chosen { border-color: #5fc68f99; }
+.cinput:disabled { opacity: .55; cursor: not-allowed; }
+.cbtn { position: absolute; right: 2px; top: 2px; bottom: 2px; width: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center; border-radius: 10px; }
+.cinput:disabled + .cbtn { pointer-events: none; opacity: .4; }
+.clist { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: .25rem; list-style: none; max-height: min(320px, 46vh); overflow-y: auto; overscroll-behavior: contain; background: #0f1d40; border: 1px solid var(--crystal); border-radius: 12px; box-shadow: 0 16px 40px #000a; }
+.clist[hidden] { display: none; }
+.clist li { display: grid; gap: .05rem; padding: .55rem .65rem; min-height: 44px; border-radius: 8px; cursor: pointer; color: var(--text); line-height: 1.3; }
+.clist li .osub { font-size: .8rem; color: var(--muted); }
+.clist li.act, .clist li:hover { background: #8fdcff22; }
+.clist li[aria-selected=true] { outline: 1px solid #8fdcff66; }
+.clist li.none { color: var(--muted); cursor: default; font-size: .9rem; }
+.chint { font-size: .78rem; color: var(--muted); min-height: 0; }
+.chint:empty { display: none; }
+.linkbtn { justify-self: start; background: none; border: 0; padding: .35rem 0; min-height: 32px; color: var(--saffron); font: inherit; font-size: .9rem; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.nlbox { display: grid; gap: .45rem; border-top: 1px dashed var(--line); padding-top: .5rem; }
+.nlbox[hidden], .nlbox [hidden] { display: none; }
+.nlmodes { border: 0; padding: 0; margin: 0; display: grid; gap: .3rem; min-width: 0; }
+.nlmodes legend { font-family: var(--body); font-size: .85rem; color: var(--muted); padding: 0; }
+.nlmodes .check { min-height: 36px; }
+.psum { font-size: .9rem; line-height: 1.4; color: var(--good); overflow-wrap: anywhere; }
+.psum:empty { display: none; }
+.psum.bad { color: var(--bad); }
+.err ul { margin: .3rem 0 0; padding-left: 1.1rem; }
+.confirm { border: 1px solid var(--bad); border-radius: 12px; padding: .8rem; display: grid; gap: .6rem; background: #ec6a5214; }
+.confirm[hidden] { display: none; }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.ghost.danger { background: transparent; color: var(--bad); }
+.dasha li.pre > button .muted, .dasha li.pre > span { opacity: .55; }
+.tpick select:disabled { opacity: .45; }
+@media (max-width: 520px) { .placebox { padding: .6rem .55rem .7rem; } .nlbox .three { grid-template-columns: 1fr 1fr; } .nlbox .three > div:last-child { grid-column: 1 / -1; } }
 .feats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
 .feat { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1.1rem; color: var(--text); font: inherit; display: grid; gap: .3rem; align-content: start; cursor: pointer; transition: border-color .15s, transform .15s; }
 .feat:hover { border-color: var(--crystal); transform: translateY(-2px); }
@@ -369,7 +409,7 @@ footer { max-width: 1040px; margin: 0 auto; padding: 0 16px 6rem; color: var(--m
   <details><summary>Is my birth data safe?</summary><p>Your birth details are stored on your own device. See our <a href="privacy.html">privacy policy</a>.</p></details>
   <!--SITE_LINKS--><p class="note"><a href="about.html">About</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="refund.html">Refunds</a> · <a href="contact.html">Contact</a> · <a href="en/">Daily rashifal</a> · <a href="hi/">आज का राशिफल</a></p><!--/SITE_LINKS-->
 </section>
-<footer>Spatik Astro uses classical Vedic (Jyotish) methods for guidance and self-reflection. It does not replace professional medical, legal or financial advice. Your birth details are stored only on your device. Place data: <a href="https://github.com/dr5hn/countries-states-cities-database">Countries States Cities Database</a>, under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL</a>.</footer>
+<footer>Spatik Astro uses classical Vedic (Jyotish) methods for guidance and self-reflection. It does not replace professional medical, legal or financial advice. Your birth details are stored only on your device. Place data: India Post <a href="https://www.data.gov.in/catalog/all-india-pincode-directory">All India Pincode Directory</a> and the <a href="https://lgdirectory.gov.in/">Local Government Directory</a> (<a href="https://data.gov.in/government-open-data-license-india">Government Open Data Licence – India</a>); <a href="https://github.com/dr5hn/countries-states-cities-database">Countries States Cities Database</a> (<a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL</a>); <a href="https://www.geonames.org/">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>). <a href="places/LICENSE.txt">Details</a>.</footer>
 <div id="modal" hidden></div>
 <script>
 /*ENGINE*/

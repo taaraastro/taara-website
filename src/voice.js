@@ -13,10 +13,13 @@ function voiceInfo(code) {
   if (DEVICE_VOICE[code]) return { tier: "device", tts: null, web: DEVICE_VOICE[code] };
   return { tier: "text", tts: null, web: null };
 }
+/* the language to listen in: the language of the last question, else the chosen language, else the device language */
 function voiceLang() {
-  if (state.lang !== "auto") return LANG[state.lang] || LANG.en;
   const lastUser = [...state.chat].reverse().find(m => m.role === "user");
-  return LANG[detectLang(lastUser ? lastUser.content : "", "en")] || LANG.en;
+  if (lastUser) return LANG[detectReplyLang(lastUser.content, state.lang)] || LANG.en;
+  if (state.lang !== "auto") return LANG[state.lang] || LANG.en;
+  const nav = (typeof navigator !== "undefined" && navigator.language || "en").slice(0, 2).toLowerCase();
+  return LANG[nav] && nav !== "en" ? LANG[nav] : LANG.en;
 }
 
 /* opposite-gender voice: women hear a male astrologer, men a female one */
@@ -58,11 +61,12 @@ function addVoxSec(s) {
 const fmtMin = s => s >= 60 ? `${Math.floor(s / 60)} min` : `${Math.round(s)} sec`;
 
 /* text that sounds right when spoken */
-function spokenText(mdText) {
-  return mdText.replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^\s*(\d+\.|[-•])\s+/gm, "").replace(/\s–\s/g, " to ").replace(/–/g, ", ").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").replace(/\.\s*\./g, ".").replace(/\s+/g, " ").trim();
+const RANGE_TO = { hi: " से ", mr: " ते ", ne: " देखि ", bn: " থেকে ", as: "ৰ পৰা ", gu: " થી ", pa: " ਤੋਂ ", or: " ରୁ ", ta: " முதல் ", te: " నుండి ", kn: " ರಿಂದ ", ml: " മുതൽ ", ur: " سے ", hinglish: " se " };
+function spokenText(mdText, code) {
+  return mdText.replace(/\s*\(\d+\/100\)/g, "").replace(/\s–\s/g, RANGE_TO[tmplCode(code || "en")] || " to ").replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^\s*(\d+\.|[-•])\s+/gm, "").replace(/\s–\s/g, " to ").replace(/–/g, ", ").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").replace(/\.\s*\./g, ".").replace(/\s+/g, " ").trim();
 }
-function spokenSummary(mdText, max = 700) {
-  const s = spokenText(mdText);
+function spokenSummary(mdText, max = 700, code) {
+  const s = spokenText(mdText, code);
   if (s.length <= max) return s;
   const cut = s.slice(0, max), end = Math.max(cut.lastIndexOf("। "), cut.lastIndexOf(". "), cut.lastIndexOf("? "));
   return end > 80 ? cut.slice(0, end + 1) : cut;
@@ -98,10 +102,10 @@ function mostlyLatin(s) {
   const latin = (s.match(/[A-Za-z]/g) || []).length, other = (s.match(/[\u0900-\u0DFF\u0600-\u06FF\uABC0-\uABFF]/g) || []).length;
   return latin > 3 * other;
 }
-async function speakAnswer(text) {
+async function speakAnswer(text, langCode) {
   const p = prof(), c = chartOf(p), g = voiceGender(p), tone = toneFor(c);
-  const say = spokenSummary(text.replace(/^\*[^*\n]+\*\s*/, ""));
-  let L = voiceLang();
+  let L = LANG[langCode] || LANG[detectReplyLang(text, state.lang)] || voiceLang(); // speak in the language the answer is written in
+  const say = spokenSummary(text.replace(/^\*[^*\n]+\*\s*/, ""), 700, L.code);
   if (!["en", "hinglish", "kha", "lus"].includes(L.code) && mostlyLatin(say)) L = LANG.en; // an English answer is read by the English voice
   const vi = voiceInfo(L.code);
   if (!say) return { ok: false };
@@ -171,9 +175,9 @@ async function voiceAsk(text) {
   state.voiceTurn = false;
   const last = state.chat.slice(before).reverse().find(m => m.role === "assistant");
   if (last && !state.pending) {
-    const r = await speakAnswer(last.content);
+    const r = await speakAnswer(last.content, last.lang);
     if (r.reason === "limit") { state.chat.push({ role: "assistant", content: `Your voice minutes for this month are used up. Add **${VOICE_PACK_MIN} minutes for ₹${VOICE_PACK_PRICE}** or move to Gold for 30 minutes a month. The written answer is above.`, upsell: true }); render(); }
-    else if (r.reason === "novoice") setMicNote(`No ${voiceLang().name} voice is available on this device yet, so the answer is in writing.`);
+    else if (r.reason === "novoice") setMicNote(`This device cannot read ${(LANG[last.lang] || voiceLang()).name} aloud yet, so the answer is in writing.`);
   }
 }
 /* called straight from the Speak button's click */
@@ -189,7 +193,7 @@ function micClick() {
   if (VOICE_PROXY_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     recordWav().then(rec => {
       Voice.rec = rec; Voice.listening = true; render(); setMicNote("Listening… tap Send when you finish.");
-      return rec.result.then(blob => { const f = new FormData(); f.append("file", blob, "q.wav"); f.append("lang", vi.tts && L.code !== "hinglish" ? vi.tts : "unknown"); setMicNote("Understanding…"); return fetch(VOICE_PROXY_URL + "/stt", { method: "POST", body: f }); })
+      return rec.result.then(blob => { const f = new FormData(); f.append("file", blob, "q.wav"); f.append("lang", state.lang !== "auto" && vi.tts && L.code !== "hinglish" ? vi.tts : "unknown"); setMicNote("Understanding…"); return fetch(VOICE_PROXY_URL + "/stt", { method: "POST", body: f }); })
         .then(r => r.json()).then(j => voiceAsk(j.text));
     }).catch(() => { Voice.listening = false; render(); setMicNote("Microphone permission is needed to speak your question."); });
     return;
@@ -219,13 +223,13 @@ function micClick() {
   setMicNote("Voice input is not available in this browser. Please type your question.");
 }
 
-/* the agent card above the chat */
+/* the agent card above the chat: only what a user needs (speak, minutes left, a plain voice choice).
+   The opposite-gender default and the kundli-based tone stay internal. */
 function voicePanel() {
-  const p = prof(), c = chartOf(p), L = voiceLang(), vi = voiceInfo(L.code), g = voiceGender(p), tone = toneFor(c), cap = voiceCapability(L.code), pref = store.get("voiceGender", "auto");
-  const avail = cap === "none" ? `<span class="pill warn">Text only in ${L.name} for now</span>` : `<span class="pill good">${vi.tier === "shared" ? `Speaks with a ${vi.via} voice` : `${L.name} voice`}</span>`;
+  const L = voiceLang(), cap = voiceCapability(L.code), pref = store.get("voiceGender", "auto");
+  const sel = v => pref === v ? " selected" : "";
   return `<div class="vpanel">
-    <div class="vrow"><b>Voice astrologer · ${L.native}</b>${avail}<span class="muted">${fmtMin(voiceLeftSec())} left this month</span></div>
-    <div class="vrow muted"><span>${g === "male" ? "Male" : "Female"} voice for ${esc(p.name)}${pref === "auto" ? (p.gender ? "" : " (add gender in profile to auto-match)") : ""}</span><span>Tone: <b>${tone.label}</b>, like ${tone.role}</span></div>
-    <div class="vrow"><label for="vgender" class="muted">Voice</label><select id="vgender" class="langsel"><option value="auto"${pref === "auto" ? " selected" : ""}>Auto (opposite to ${esc(p.name)})</option><option value="female"${pref === "female" ? " selected" : ""}>Female voice</option><option value="male"${pref === "male" ? " selected" : ""}>Male voice</option></select><span class="muted vwhy">Tone from ${tone.why}</span></div>
+    <div class="vrow"><b>Voice</b>${cap === "none" ? `<span class="pill warn">Written answers only in ${L.native} on this device</span>` : ""}<span class="muted">${fmtMin(voiceLeftSec())} left this month</span></div>
+    <details class="vset"><summary class="muted">Voice settings</summary><div class="vrow"><label for="vgender" class="muted">Voice</label><select id="vgender" class="langsel"><option value="auto"${sel("auto")}>Default</option><option value="female"${sel("female")}>Female</option><option value="male"${sel("male")}>Male</option></select></div></details>
   </div>`;
 }

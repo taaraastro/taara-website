@@ -9,11 +9,24 @@ const REPORTS = {
 const REPORT_PACK_PRICE = 999;
 
 /* ---- free trial ---- */
-const trialUsed = () => !!store.get("trialUsed", false);
+/* the trial flag is also kept in the device ledger, which "Start as a new person" does not erase */
+const trialUsed = () => !!store.get("trialUsed", false) || !!ledger.get().trial;
 function startTrial() {
   if (trialUsed()) return { ok: false, msg: "The free trial has already been used on this device." };
-  store.set("trialUsed", true);
+  if (typeof API !== "undefined" && API) return startTrialServer();
+  store.set("trialUsed", true); ledger.update(L => { L.trial = Date.now(); });
   store.set("plan", { id: "silver", expires: Date.now() + TRIAL_DAYS * 864e5, trial: true });
+  return { ok: true, msg: `Your ${TRIAL_DAYS}-day Silver trial has started. Enjoy exact windows, power days and 100 questions per kundli.` };
+}
+/* with the activation server, one trial per device is enforced by the server */
+async function startTrialServer() {
+  const id = await DEVICE.ready;
+  let r; try { r = await apiCall("/trial", { deviceId: id }); } catch (e) { return { ok: false, msg: OFFLINE_MSG }; }
+  const j = r.j || {};
+  if (!j.ok && j.error !== "trial_used") return { ok: false, msg: j.msg || "The activation server could not start the trial just now. Please try again in a few minutes." };   // 429 / 5xx are not fatal
+  store.set("trialUsed", true); ledger.update(L => { L.trial = L.trial || Date.now(); });
+  if (!j.ok) return { ok: false, msg: j.msg || "The free trial has already been used on this device." };
+  store.set("plan", { id: "silver", expires: j.until, trial: true }); cacheEnt(undefined, { start: Date.now(), until: j.until });
   return { ok: true, msg: `Your ${TRIAL_DAYS}-day Silver trial has started. Enjoy exact windows, power days and 100 questions per kundli.` };
 }
 const onTrial = () => { const s = store.get("plan", {}); return s.trial && s.expires > Date.now(); };
@@ -129,8 +142,11 @@ function reportText(key) {
 
 /* ---- referrals ---- */
 function deviceId() { let d = store.get("device", ""); if (!d) { d = Math.random().toString(36).slice(2, 10); store.set("device", d); } return d; }
-const myRefCode = () => "TAARA-" + (hash("ref" + deviceId()) % 1679616).toString(36).toUpperCase().padStart(4, "0");
-function inviteText() { return `I use Spatik Astro for my Kundli: it gives exact dasha dates, power days and answers in ${LANGS.length - 2} Indian languages. Try it free, with a ${TRIAL_DAYS}-day free trial: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}\nMy invite code: ${myRefCode()}`; }
+/* SPATIK-XXXX; links and codes from the older TAARA- scheme are still accepted (refFromHash) */
+const refPart = () => (hash("ref" + deviceId()) % 1679616).toString(36).toUpperCase().padStart(4, "0");
+const myRefCode = () => "SPATIK-" + refPart();
+function refFromHash(h) { return String(h || "").replace(/^#?ref-/i, "").replace(/^(taara|spatik)-/i, "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8); }
+function inviteText() { return `I use Spatik Astro for my Kundli: it gives exact dasha dates, power days and answers in ${LANGS.length - 2} Indian languages. Try it free, with a ${TRIAL_DAYS}-day free trial: ${location.href.split("#")[0]}#ref-${refPart().toLowerCase()}\nMy invite code: ${myRefCode()}`; }
 function referralCard() {
   return `<section class="card">
     <h2>Invite friends, earn free months</h2>

@@ -8,6 +8,120 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem("taara." + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("taara." + k, JSON.stringify(v)); } catch (e) {} },
 };
+/* Device ledger: activation codes and the free trial used on this device. It is NOT a "taara." key, so "Start as a new
+   person" (which erases taara.* only) keeps it. A real one-code-one-device check needs a server; see qa/DEV_REPORT.md. */
+const ledger = {
+  KEY: "spatik.ledger",
+  get() { try { const v = JSON.parse(localStorage.getItem(this.KEY) || "{}"); return v && typeof v === "object" ? v : {}; } catch (e) { return {}; } },
+  update(fn) { const v = this.get(); fn(v); try { localStorage.setItem(this.KEY, JSON.stringify(v)); } catch (e) {} return v; },
+};
+/* ---------- activation server (optional) ----------
+   When CFG.apiUrl is set (site.config.json "apiUrl"), codes, plans and the free trial are checked by the Spatik API Worker
+   (spatik-api/), which binds each code to one device. Without it the app keeps the offline code check below. */
+const API = String(CFG.apiUrl || "").replace(/\/+$/, "");
+/* Device ID: a random UUID created once and kept in three places that "Start as a new person" does not clear:
+   localStorage "spatik.deviceId", a cookie "spatik_did" and IndexedDB (spatik/kv). If one is lost, another restores it. */
+const DEVICE = { KEY: "spatik.deviceId", id: "", ready: null };
+const isUuid = v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ""));
+function newUuid() {
+  try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+  const b = new Uint8Array(16); crypto.getRandomValues(b); b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, "0")).join(""); return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+function idb(mode, fn) {
+  return new Promise(res => {
+    try {
+      const rq = indexedDB.open("spatik", 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore("kv");
+      rq.onerror = () => res(null);
+      rq.onsuccess = () => { try { const tx = rq.result.transaction("kv", mode), r = fn(tx.objectStore("kv")); tx.oncomplete = () => res(r && r.result !== undefined ? r.result : null); tx.onerror = () => res(null); } catch (e) { res(null); } };
+    } catch (e) { res(null); }
+  });
+}
+function persistDevice(id) {
+  try { localStorage.setItem(DEVICE.KEY, id); } catch (e) {}
+  try { document.cookie = `spatik_did=${encodeURIComponent(id)}; max-age=${10 * 365 * 86400}; path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`; } catch (e) {}
+  idb("readwrite", st => st.put(id, "deviceId"));
+}
+function initDevice() {
+  let id = ""; try { id = localStorage.getItem(DEVICE.KEY) || ""; } catch (e) {}
+  if (!isUuid(id)) { try { const m = document.cookie.match(/(?:^|; )spatik_did=([^;]+)/); if (m) id = decodeURIComponent(m[1]); } catch (e) {} }
+  if (isUuid(id)) { DEVICE.id = id; persistDevice(id); DEVICE.ready = Promise.resolve(id); return; }
+  DEVICE.ready = Promise.race([idb("readonly", st => st.get("deviceId")), new Promise(r => setTimeout(() => r(null), 1500))]).then(v => {
+    DEVICE.id = isUuid(v) ? v : newUuid(); persistDevice(DEVICE.id); return DEVICE.id;
+  });
+}
+async function apiCall(path, body, ms = 10000) {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null, t = setTimeout(() => ctrl && ctrl.abort(), ms);
+  try { const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl && ctrl.signal }); let j = null; try { j = await r.json(); } catch (e) {} return { status: r.status, j }; }
+  finally { clearTimeout(t); }
+}
+const OFFLINE_MSG = "Could not reach the activation server. Check your internet connection and try again.";
+const fmtDay = t => new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const PLAN_RANK = { silver: 1, gold: 2, unlimited: 3 };
+/* apply a plan the server confirmed (never replaces a better or longer local plan) */
+function applyServerPlan(id, until, trial) {
+  const cur = planState();
+  if (until <= Date.now()) return false;
+  if (cur.id !== "free" && (PLAN_RANK[cur.id] > PLAN_RANK[id] || (cur.id === id && cur.expires >= until))) return false;
+  store.set("plan", trial ? { id, expires: until, trial: true } : { id, expires: until, server: true }); return true;
+}
+async function redeemServer(code) {
+  const id = await DEVICE.ready;
+  let r; try { r = await apiCall("/redeem", { code, deviceId: id }); } catch (e) { return { ok: false, msg: OFFLINE_MSG }; }
+  const j = r.j || {};
+  if (!j.ok) return { ok: false, msg: j.msg || (r.status === 409 ? "This code is already used on another phone. Contact support to move it." : OFFLINE_MSG) };
+  const used = store.get("redeemed", []), led = ledger.get(), applied = !!((led.codes || {})[code] && led.codes[code].applied);
+  const remember = extra => ledger.update(L => { L.codes = L.codes || {}; L.codes[code] = Object.assign({ key: j.product, at: Date.now(), applied: true, server: true }, extra || {}); L.synced = Object.assign(L.synced || {}, { [code]: 1 }); });
+  if (!used.includes(code)) { used.push(code); store.set("redeemed", used); }
+  if (j.kind === "plan") {
+    const [pid] = j.product.split("-");
+    if (j.expired) return { ok: false, msg: `This code's ${PLANS[pid].name} plan ended on ${fmtDay(j.until)}.` };
+    applyServerPlan(pid, j.until); remember({ plan: pid, until: j.until });
+    ledger.update(L => { L.ent = (L.ent || []).filter(e => e.product !== j.product || e.until !== j.until).concat([{ product: j.product, kind: "plan", until: j.until }]); });
+    return { ok: true, msg: j.restored ? `This code was already used on this device. Your ${PLANS[pid].name} plan is restored until ${fmtDay(j.until)}.` : `${PLANS[pid].name} plan active until ${fmtDay(j.until)}.` };
+  }
+  if (j.restored && (applied || j.kind === "credit")) return { ok: false, msg: j.kind === "credit" ? "Credits from this code were already added on this device. Contact us if you need help." : "This code is already applied on this device." };
+  remember();
+  return applyProduct(j.product);
+}
+/* question, report and voice credits and the extra-kundli add-on */
+function applyProduct(key) {
+  if (key === "addon") { store.set("addons", store.get("addons", 0) + 1); return { ok: true, msg: `Done. You can now save ${fmtLimit(kundliLimit())} kundlis.` }; }
+  if (key === "qpack15" || key === "qpack40") { const n = key === "qpack15" ? 15 : 40; store.set("qCredits", qCredits() + n); return { ok: true, msg: `${n} question credits added.` }; }
+  if (key === "voicepack") { store.set("voxBonus", store.get("voxBonus", 0) + VOICE_PACK_MIN * 60); return { ok: true, msg: `${VOICE_PACK_MIN} voice minutes added.` }; }
+  if (key === "report" || key === "reportpack") { const n = key === "report" ? 1 : 4; store.set("reportCredits", store.get("reportCredits", 0) + n); return { ok: true, msg: `${n} report credit${n > 1 ? "s" : ""} added. Open any report in the Kundli tab to unlock it.` }; }
+  return { ok: false, msg: "Unknown product." };
+}
+/* last entitlements confirmed by the server, kept in the device ledger so they work offline and after "Start as a new person" */
+function cacheEnt(list, trial) { ledger.update(L => { if (list) L.ent = list; if (trial !== undefined) L.trialEnt = trial; L.entAt = Date.now(); }); }
+function applyEntitlements(ents, trial) {
+  let changed = false;
+  const plans = (ents || []).filter(e => e.kind === "plan" && e.until > Date.now()).sort((a, b) => PLAN_RANK[b.product.split("-")[0]] - PLAN_RANK[a.product.split("-")[0]] || b.until - a.until);
+  if (plans[0]) changed = applyServerPlan(plans[0].product.split("-")[0], plans[0].until) || changed;
+  else if (trial && trial.until > Date.now() && planState().id === "free" && !store.get("plan", {}).trial) changed = applyServerPlan("silver", trial.until, true) || changed;
+  const adds = (ents || []).filter(e => e.kind === "addon").length;
+  if (adds > store.get("addons", 0)) { store.set("addons", adds); changed = true; }
+  if (trial) { if (!store.get("trialUsed", false)) { store.set("trialUsed", true); changed = true; } ledger.update(L => { L.trial = L.trial || trial.start || Date.now(); }); }
+  return changed;
+}
+/* ask the server which plans this device owns (on start, at most every 30 minutes); offline -> use the cached copy */
+async function syncEntitlements(force) {
+  if (!API) return;
+  const L0 = ledger.get();
+  if (!force && L0.entAt && Date.now() - L0.entAt < 30 * 60e3) { if (applyEntitlements(L0.ent, L0.trialEnt)) render(); return; }
+  const id = await DEVICE.ready;
+  const el = document.getElementById("device-id"); if (el) el.textContent = id;
+  // codes redeemed with the offline check before the server existed: bind them to this device once
+  const old = [...new Set([...store.get("redeemed", []), ...Object.keys(L0.codes || {})])].filter(c => !(L0.synced || {})[c]).slice(0, 20);
+  for (const c of old) { try { const r = await apiCall("/redeem", { code: c, deviceId: id }, 8000); if (r.j) ledger.update(L => { L.synced = Object.assign(L.synced || {}, { [c]: 1 }); }); } catch (e) { break; } }
+  try {
+    const r = await apiCall("/status", { deviceId: id }, 8000);
+    if (r.j && r.j.ok) { cacheEnt(r.j.entitlements, r.j.trial || null); if (applyEntitlements(r.j.entitlements, r.j.trial)) render(); return; }
+  } catch (e) {}
+  if (applyEntitlements(L0.ent, L0.trialEnt)) render();
+}
+initDevice();
 const FEEDBACK_URL = CFG.feedbackUrl || ""; // a Google Form link to collect reviews
 /* ===== PLANS: edit prices and limits here ===== */
 const PLANS = {
@@ -92,19 +206,32 @@ async function sha16(s) {
 async function redeem(raw) {
   const code = raw.trim().toUpperCase().replace(/\s+/g, "");
   if (!code) return { ok: false, msg: "Enter the activation code you received after payment." };
+  if (API) return redeemServer(code);
   const used = store.get("redeemed", []);
   if (used.includes(code)) return { ok: false, msg: "This code is already applied on this device." };
   let key;
   try { key = CODE_HASHES[await sha16("taara:" + code)]; } catch (e) { return { ok: false, msg: "Your browser blocked the check. Please try another browser." }; }
   if (!key) return { ok: false, msg: "That code is not valid. Check it letter by letter, or contact us." };
+  const past = (ledger.get().codes || {})[code];
+  if (past) {   // used on this device before "Start as a new person": restore a plan until its original end date, never extend it
+    const fmt = t => new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    if (past.plan && past.until > Date.now()) {
+      const cur = planState();
+      if (!(cur.id === past.plan && cur.expires >= past.until)) store.set("plan", { id: past.plan, expires: past.until });
+      used.push(code); store.set("redeemed", used);
+      return { ok: true, msg: `This code was already used on this device. Your ${PLANS[past.plan].name} plan is restored until ${fmt(past.until)} (a code cannot extend it again).` };
+    }
+    if (past.plan) return { ok: false, msg: `This code was already used on this device and its plan ended on ${fmt(past.until)}.` };
+    return { ok: false, msg: "This code was already used on this device. Credits from a code can be added only once. Contact us if you need help." };
+  }
   used.push(code); store.set("redeemed", used);
-  if (key === "addon") { store.set("addons", store.get("addons", 0) + 1); return { ok: true, msg: `Done. You can now save ${fmtLimit(kundliLimit())} kundlis.` }; }
-  if (key === "qpack15" || key === "qpack40") { const n = key === "qpack15" ? 15 : 40; store.set("qCredits", qCredits() + n); return { ok: true, msg: `${n} question credits added.` }; }
-  if (key === "voicepack") { store.set("voxBonus", store.get("voxBonus", 0) + VOICE_PACK_MIN * 60); return { ok: true, msg: `${VOICE_PACK_MIN} voice minutes added.` }; }
-  if (key === "report" || key === "reportpack") { const n = key === "report" ? 1 : 4; store.set("reportCredits", store.get("reportCredits", 0) + n); return { ok: true, msg: `${n} report credit${n > 1 ? "s" : ""} added. Open any report in the Kundli tab to unlock it.` }; }
+  const remember = extra => ledger.update(L => { L.codes = L.codes || {}; L.codes[code] = Object.assign({ key, at: Date.now() }, extra || {}); });
+  if (!/^(silver|gold|unlimited)-/.test(key)) remember();
+  if (!/^(silver|gold|unlimited)-/.test(key)) return applyProduct(key);
   const [id, per] = key.split("-"), days = per === "y" ? 365 : 30, cur = planState();
   const base = cur.id === id && cur.expires > Date.now() ? cur.expires : Date.now();
   store.set("plan", { id, expires: base + days * 864e5 });
+  remember({ plan: id, until: base + days * 864e5 });
   return { ok: true, msg: `${PLANS[id].name} plan active until ${new Date(base + days * 864e5).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}.` };
 }
 function limitMsgKundli() {
@@ -235,19 +362,37 @@ function renderNav() {
   const html = TABS.map(([k, en, hi]) => `<button class="tab${state.tab === k ? " on" : ""}" data-tab="${k}" aria-current="${state.tab === k ? "page" : "false"}"><span class="tab-hi" lang="hi">${hi}</span><span>${en}</span></button>`).join("");
   $("#tabs").innerHTML = html;
   const sel = profiles().map((p, i) => `<option value="${i}"${i === state.active ? " selected" : ""}>${esc(p.name)}${p.example ? " (example)" : ""}</option>`).join("");
-  $("#who").innerHTML = hasReal() ? `<label class="sr" for="profile-select">Profile</label><select id="profile-select">${sel}</select><button class="btn ghost sm" id="add-profile">+ Add person</button>` : `<button class="btn sm" data-act="start">Get free Kundli</button>`;
+  $("#who").innerHTML = hasReal() ? `<label class="sr" for="profile-select">Profile</label><select id="profile-select">${sel}</select><button class="btn ghost sm" data-act="edit" aria-label="Edit birth details of ${esc(prof().name)}">Edit</button><button class="btn ghost sm" id="add-profile">+ Add person</button>` : `<button class="btn sm" data-act="start">Get free Kundli</button>`;
 }
 const hasReal = () => state.profiles.length > 0;
 function render() {
   renderNav();
   const v = $("#view");
-  if (!hasReal() && ["today", "kundli", "ask"].includes(state.tab)) v.innerHTML = viewWelcome();
-  else if (state.tab === "today") v.innerHTML = viewToday();
-  else if (state.tab === "kundli") v.innerHTML = viewKundli();
-  else if (state.tab === "ask") { v.innerHTML = viewAsk(); scrollChat(); }
-  if (state.tab === "match") v.innerHTML = viewMatch();
-  if (state.tab === "plus") v.innerHTML = viewPlus();
+  try {
+    if (!hasReal() && ["today", "kundli", "ask"].includes(state.tab)) v.innerHTML = viewWelcome();
+    else if (prof().needsPlace && ["today", "kundli", "ask"].includes(state.tab)) v.innerHTML = viewNeedsDetails();
+    else if (state.tab === "today") v.innerHTML = viewToday();
+    else if (state.tab === "kundli") v.innerHTML = viewKundli();
+    else if (state.tab === "ask") { v.innerHTML = viewAsk(); scrollChat(); }
+    if (state.tab === "match") v.innerHTML = viewMatch();
+    if (state.tab === "plus") v.innerHTML = viewPlus();
+  } catch (err) {
+    console.error(err);
+    v.innerHTML = `<section class="card"><h2>Please check the birth details</h2><p>We could not draw this chart from the saved details. Please re-enter the date, time and place of birth.</p><div class="row-actions">${hasReal() ? `<button class="btn" data-act="edit">Edit birth details</button>` : `<button class="btn" data-act="start">Enter birth details</button>`}</div></section>`;
+  }
   try { if (location.hash.slice(1) !== state.tab) history.replaceState(null, "", "#" + state.tab); } catch (e) {}
+}
+/* a profile saved by an older version without a usable place or date */
+function viewNeedsDetails() {
+  const p = prof();
+  return `<section class="card"><h2>Please complete ${esc(p.name || "this")} birth details</h2><p>This kundli was saved by an older version of Spatik Astro${p.place ? ` with the place “${esc(p.place)}”` : ""}, but its exact place or date is missing, so the chart would be wrong. Choose the place of birth from the list to continue.</p><div class="row-actions"><button class="btn" data-act="edit">Complete birth details</button></div></section>`;
+}
+/* tab change: add a history entry so the phone's Back button returns to the previous tab */
+function goTab(tab) {
+  if (state.tab === tab) { render(); return; }
+  state.tab = tab;
+  try { history.pushState({ tab }, "", "#" + tab); } catch (e) {}
+  render(); window.scrollTo(0, 0);
 }
 
 function exampleBanner(p) {
@@ -503,6 +648,7 @@ function viewKundli() {
         <div class="seg" role="group" aria-label="Chart type"><button class="${state.kmode === "lagna" ? "on" : ""}" data-kmode="lagna">Lagna</button><button class="${state.kmode === "moon" ? "on" : ""}" data-kmode="moon">Moon</button></div></div></div>
       ${chartStyle() === "south" ? southChart(c, state.kmode) : northChart(c, state.kmode)}
       <p class="note">${esc(p.name)} · ${fmtDateStr(p.date)}, ${p.unknownTime ? "time unknown (noon used)" : fmtTime(p.time)} · ${esc(p.place || `${p.lat}, ${p.lon}`)}. ${chartStyle() === "south" ? "South Indian style (fixed signs, Lagna marked with a slash)" : "North Indian style"}, Lahiri ayanamsa ${A.fmtDeg(A.ayanamsa(c.J))}. ℞ marks retrograde.</p>
+      ${p.example ? "" : `<div class="row-actions"><button class="btn ghost sm" data-act="edit">Edit birth details</button></div>`}
     </section>
     <section class="card">
       <h2>Planet positions</h2>
@@ -526,12 +672,14 @@ function viewKundli() {
         const isCur = cur && m === cur.md, open = state.openMd === i || (state.openMd === null && isCur);
         return `<li class="${isCur ? "cur" : ""}"><button data-md="${i}" aria-expanded="${open}"><b>${m.lord}</b><span class="muted">${fmtJ(Math.max(m.start, c.J), tz, false)} – ${fmtJ(m.end, tz, false)}</span>${isCur ? '<span class="pill good">Now</span>' : ""}</button>
         ${open ? `<ul class="ads">${m.ads.map((ad, j) => {
+          if (ad.end <= c.J) return "";   // Antardashas that ended before birth are not shown
           const kA = i + "-" + j, isA = cur && ad === cur.ad, oA = state.openAd === kA || (state.openAd === null && isA);
-          return `<li class="${isA ? "cur" : ""}"><button class="sub" data-ad="${kA}" aria-expanded="${oA}"><span>${ad.lord} <small>AD</small></span><span class="muted">${fmtJ(ad.start, tz)} – ${fmtJ(ad.end, tz)}</span></button>
+          return `<li class="${isA ? "cur" : ""}"><button class="sub" data-ad="${kA}" aria-expanded="${oA}"><span>${ad.lord} <small>AD</small></span><span class="muted">${ad.start < c.J ? "birth " : ""}${fmtJ(Math.max(ad.start, c.J), tz)} – ${fmtJ(ad.end, tz)}</span></button>
           ${oA ? `<ul class="ads lvl3">${A.subPeriods(ad).map((pd, k) => {
             const kP = kA + "-" + k, isP = cur && isA && pd.lord === cur.pd.lord && Math.abs(pd.start - cur.pd.start) < 1e-6, oP = state.openPd === kP || (state.openPd === null && isP);
-            return `<li class="${isP ? "cur" : ""}"><button class="sub" data-pd="${kP}" aria-expanded="${oP}"><span>${pd.lord} <small>PD</small></span><span class="muted">${fmtJ(pd.start, tz)} – ${fmtJ(pd.end, tz)}</span></button>
-            ${oP ? `<ul class="ads lvl4">${A.subPeriods(pd).map(sd => { const isS = isP && sd.lord === cur.sd.lord && Math.abs(sd.start - cur.sd.start) < 1e-6; return `<li class="${isS ? "cur" : ""}"><span>${sd.lord} <small>SD</small></span><span class="muted">${fmtJ(sd.start, tz)} – ${fmtJ(sd.end, tz)}</span></li>`; }).join("")}</ul>` : ""}</li>`;
+            const preP = pd.end <= c.J;
+            return `<li class="${isP ? "cur" : ""}${preP ? " pre" : ""}"><button class="sub" data-pd="${kP}" aria-expanded="${oP}"><span>${pd.lord} <small>PD</small></span><span class="muted">${preP ? "before birth · " : pd.start < c.J ? "birth " : ""}${fmtJ(preP ? pd.start : Math.max(pd.start, c.J), tz)} – ${fmtJ(pd.end, tz)}</span></button>
+            ${oP ? `<ul class="ads lvl4">${A.subPeriods(pd).map(sd => { const isS = isP && sd.lord === cur.sd.lord && Math.abs(sd.start - cur.sd.start) < 1e-6, preS = sd.end <= c.J; return `<li class="${isS ? "cur" : ""}${preS ? " pre" : ""}"><span>${sd.lord} <small>SD</small></span><span class="muted">${preS ? "before birth · " : sd.start < c.J ? "birth " : ""}${fmtJ(preS ? sd.start : Math.max(sd.start, c.J), tz)} – ${fmtJ(sd.end, tz)}</span></li>`; }).join("")}</ul>` : ""}</li>`;
           }).join("")}</ul>` : ""}</li>`;
         }).join("")}</ul>` : ""}</li>`;
       }).join("")}</ol>
@@ -557,8 +705,8 @@ const SUGGEST = ["When will I get a new job?", "When will I get married?", "Will
 function viewAsk() {
   const p = prof(), ai = !!state.sample;
   const Lc = state.lang === "auto" ? null : LANG[state.lang];
-  const msgs = state.chat.length ? state.chat : [{ role: "assistant", content: `${Lc ? Lc.hello : "Namaste"} ${p.name}. I am Spatik${Lc && Lc.code !== "en" ? `, your ${Lc.name} astrologer (${Lc.native})` : ""}. ${hookLine(chartOf(p), p, true, true)}\nAsk me anything about career, marriage, money, health, studies or family. I read your Kundli down to the Sukshma dasha and answer with **exact windows**, your **power days** and a **personal plan**.${state.lang === "auto" ? "\nWrite in any Indian language and I will reply in it." : ""}` }];
-  const langOpts = `<option value="auto"${state.lang === "auto" ? " selected" : ""}>Auto: reply in the language I type</option>` + [["s", "Official Indian languages"], ["o", "More Indian languages"], ["e", "English"]].map(([g, lab]) => `<optgroup label="${lab}">${LANGS.filter(l => l.group === g).map(l => `<option value="${l.code}"${state.lang === l.code ? " selected" : ""}>${l.native === l.name ? l.name : `${l.native} · ${l.name}`}</option>`).join("")}</optgroup>`).join("");
+  const msgs = state.chat.length ? state.chat : [{ role: "assistant", content: `${Lc ? Lc.hello : "Namaste"} ${p.name}. I am Spatik${Lc && Lc.code !== "en" ? `, your ${Lc.name} astrologer (${Lc.native})` : ""}. ${hookLine(chartOf(p), p, true, true)}\nAsk me anything about career, marriage, money, health, studies or family. I read your Kundli down to the Sukshma dasha and answer with **exact windows**, your **power days** and a **personal plan**.\nWrite or speak in any Indian language and I will reply in it.` }];
+  const langOpts = `<option value="auto"${state.lang === "auto" ? " selected" : ""}>Auto: match my question</option>` + [["s", "Official Indian languages"], ["o", "More Indian languages"], ["e", "English"]].map(([g, lab]) => `<optgroup label="${lab}">${LANGS.filter(l => l.group === g).map(l => `<option value="${l.code}"${state.lang === l.code ? " selected" : ""}>${l.native === l.name ? l.name : `${l.native} · ${l.name}`}</option>`).join("")}</optgroup>`).join("");
   return `${exampleBanner(p)}
   <section class="card chatcard">
     <div class="card-head"><h2>Ask the stars <span class="hi" lang="hi">प्रश्न कुंडली</span></h2>
@@ -567,7 +715,7 @@ function viewAsk() {
     <div class="chat" id="chat" aria-live="polite">${msgs.map((m, i) => `<div class="msg ${m.role}">${md(m.content)}${m.role === "assistant" && m.content.length > 40 ? `<button class="listen" data-speak="${state.chat.length ? i : -1}" aria-label="Listen to this answer">${Voice.speaking ? "Stop" : "Listen"}</button>` : ""}${m.upsell ? `<div class="row-actions">${trialBtn()}<button class="btn sm${trialUsed() ? "" : " ghost"}" data-goto="plus">See plans</button></div>` : ""}${m.locked ? lockCard() : ""}${m.paywall ? `<div class="lock"><div class="row-actions">${packButtons()}${trialBtn("Or try Silver free for 7 days")}</div><p class="note">After paying you get a code; enter it in the Plus tab.</p></div>` : ""}</div>`).join("")}${state.aiBusy ? "" : ""}</div>
     ${pendingCard()}
     <div class="sugg"${state.pending ? " hidden" : ""}>${SUGGEST.map(s => `<button class="chip btnchip" data-q="${esc(s)}">${esc(s)}</button>`).join("")}</div>
-    <form id="askform" class="ask" novalidate><label class="sr" for="q">Your question</label><input id="q" autocomplete="off" placeholder="Type your question in English, Hindi or Hinglish" maxlength="400"><button class="btn" type="button" data-act="ask" ${state.aiBusy ? "disabled" : ""}>${state.aiBusy ? "Answering…" : "Ask"}</button><button class="btn ghost mic${Voice.listening ? " on" : ""}" type="button" data-act="mic" aria-pressed="${Voice.listening}">${Voice.listening ? "Send" : "Speak"}</button></form>
+    <form id="askform" class="ask" novalidate><label class="sr" for="q">Your question</label><input id="q" autocomplete="off" placeholder="Type your question in any Indian language" maxlength="400"><button class="btn" type="button" data-act="ask" ${state.aiBusy ? "disabled" : ""}>${state.aiBusy ? "Answering…" : "Ask"}</button><button class="btn ghost mic${Voice.listening ? " on" : ""}" type="button" data-act="mic" aria-pressed="${Voice.listening}">${Voice.listening ? "Send" : "Speak"}</button></form>
     <p class="note" id="ask-note" role="status"></p>
     <p class="note">Guidance for reflection, not a substitute for medical, legal or financial advice.</p>
   </section>`;
@@ -784,9 +932,9 @@ function edgeFor(c, topic, self) {
 }
 function offlineAnswer(q, c, p, sub = {}, lock = false) {
   const self = !sub.profile, W = whoWords(p, self, sub.rel);
-  const topic = topicOf(q, sub.rel && sub.rel.match);
+  const topic = topicOf(q, sub.rel && sub.rel.match) || nativeTopic(q);
   const J = nowJ(), cur = A.currentDasha(c, J), tr = A.transits(J);
-  if (isYesNo(q)) {
+  if (isYesNo(q) || nativeYesNo(q)) {
     const t = topic || GENERAL, v = verdict(c, t, q, W), ed = edgeFor(c, t, self);
     if (lock) return `${W.header}${hookLine(c, p, self)}\n\n**Answer: ${v.label}** (about ${v.score}% favourable)\n\n**Why**\n${v.reasons.slice(0, 4).map(r => "- " + r).join("\n")}`;
     return `${W.header}${hookLine(c, p, self)}\n\n**Answer: ${v.label}** (about ${v.score}% favourable)\n\n**Why**\n${v.reasons.slice(0, 4).map(r => "- " + r).join("\n")}\n\n**${self ? "Your" : W.Your} edge**\n${ed}\n\n**${self ? "Your" : "The"} 3-step plan**\n1. ${TIPS[t.key] || TIPS.general}\n2. Take the important step on a **${LORD_DAY[v.lord]}**, the day of ${v.lord}, who rules this matter.\n3. ${personalRemedy(v.lord)}${p.unknownTime ? `\n\n${W.Your} birth time is unknown, so the house-based reasons are approximate.` : ""}`;
@@ -855,8 +1003,8 @@ function chartSummary(p, c) {
   return L.join("\n");
 }
 function engineWindows(q, c, sub = {}) {
-  const topic = topicOf(q, sub.rel && sub.rel.match);
-  if (isYesNo(q)) {
+  const topic = topicOf(q, sub.rel && sub.rel.match) || nativeTopic(q);
+  if (isYesNo(q) || nativeYesNo(q)) {
     const t = topic || GENERAL, v = verdict(c, t, q, whoWords(sub.profile || prof(), !sub.profile, sub.rel));
     return `\n\nENGINE VERDICT for "${t.label}": ${v.label} (${v.score}% favourable). Reasons: ${v.reasons.join(" ")}`;
   }
@@ -883,56 +1031,55 @@ async function ask(q) {
     state.chat.push({ role: "assistant", content: `You have more than one ${sub.rel.rel.toLowerCase()} saved. Which one is this question about?` });
     render(); return;
   }
-  const subj = sub.profile || prof();
-  if (qLeft(subj.id) <= 0) {
-    const free = planState().id === "free";
-    state.chat.push({ role: "assistant", content: free
-      ? `You have used your **${PLANS.free.questions} free questions**. Keep going for just **₹${QPACKS[0].price} for ${QPACKS[0].q} questions** (about ₹${Math.round(QPACKS[0].price / QPACKS[0].q)} a question) or **₹${QPACKS[1].price} for ${QPACKS[1].q}**. Credits never expire and work for every kundli.`
-      : `You have used this month's **${curPlan().questions} questions for ${subj.name}**. Add a question pack, or move to **Gold** for unlimited questions.`, paywall: true });
-    render(); return;
-  }
   return answerFor(q, sub);
 }
-function langFor(q) {
-  const chosen = state.lang === "auto" ? "en" : state.lang;
-  const det = detectLang(q, chosen);
-  if (state.lang === "auto") return LANG[det] || LANG.en;
-  return LANG[det !== chosen && det !== "en" ? det : chosen] || LANG.en;
+/* every answer, including questions about a relative, counts toward the free limit and shows the paywall when it is used up */
+function paywallIfNeeded(subj) {
+  if (qLeft(subj.id) > 0) return false;
+  const free = planState().id === "free";
+  state.chat.push({ role: "assistant", content: free
+    ? `You have used your **${PLANS.free.questions} free questions**. Keep going for just **₹${QPACKS[0].price} for ${QPACKS[0].q} questions** (about ₹${Math.round(QPACKS[0].price / QPACKS[0].q)} a question) or **₹${QPACKS[1].price} for ${QPACKS[1].q}**. Credits never expire and work for every kundli.`
+    : `You have used this month's **${curPlan().questions} questions for ${subj.name}**. Add a question pack, or move to **Gold** for unlimited questions.`, paywall: true });
+  render(); return true;
 }
+/* the reply follows the language of the question (typed or spoken); the chosen language is only the fallback */
+function langFor(q) { return LANG[detectReplyLang(q, state.lang)] || LANG.en; }
 async function answerFor(q, sub) {
-  const p = sub.profile || prof(), c = chartOf(p), L = langFor(q);
+  const p = sub.profile || prof();
+  if (paywallIfNeeded(p)) return;
+  const c = chartOf(p), L = langFor(q);
   state.lastSubject = sub.profile ? sub.profile.id : null;
   consumeQ(p.id);
   const lock = isLocked(p);
+  await loadLangPack(L.code);
   if (!state.sample) {
-    const note = !["en", "hinglish"].includes(L.code) ? `*${L.hello}! Full answers in ${L.name} (${L.native}) come from the AI astrologer. It is not connected on this screen, so here is your reading in English.*\n\n` : "";
-    state.chat.push({ role: "assistant", content: note + offlineAnswer(q, c, p, sub, lock), locked: lock });
+    state.chat.push({ role: "assistant", content: composeOffline(q, c, p, sub, lock, L.code), locked: lock, lang: L.code });
     markFreeFull(p);
     render(); return;
   }
-  const msg = { role: "assistant", content: "Reading the chart…", locked: lock };
+  const msg = { role: "assistant", content: "Reading the chart…", locked: lock, lang: L.code };
   state.chat.push(msg); state.aiBusy = true; render();
-  const yn = isYesNo(q), other = !!sub.profile;
+  const yn = isYesNo(q) || nativeYesNo(q), other = !!sub.profile, scope = timeScopePrompt(q, c, p, sub);
   const sys = `You are Spatik, a warm, precise Vedic astrologer inside an astrology app. Use ONLY the computed chart data below (sidereal, Lahiri, whole-sign houses, Vimshottari dasha). Never invent planet positions.
 ${other ? `This question is about ${p.name}, the user's ${(p.relation || "relative").toLowerCase()}. The chart below is ${p.name}'s own chart. Talk about ${p.name} by name and use only this chart; do not mix in the user's own chart.\n` : ""}If the user asks about another person whose chart is not given below, do not answer from this chart. Ask for that person's name, date of birth, time of birth and place of birth instead.
-LANGUAGE: ${agentLine(L, state.lang === "auto")}
+LANGUAGE: The user wrote (or spoke) this question in ${L.name}. ${agentLine(L, false)} Reply in ${L.name} even if the app setting or earlier messages use another language, and keep the same language for the spoken version.
 STYLE (this is what makes Spatik Astro special): Write like a wise, warm family astrologer who knows ${other ? p.name : "this person"} deeply. Every answer must feel written for this one chart, never generic. Use this structure:
 1. One-line personal hook using the name and one striking item from SIGNATURE (birth-star deity or gift, a yoga, or the power planet).
 2. The direct answer in one or two sentences.
 3. Why: 2-3 reasons naming the houses, lords and running dasha.
-4. ${yn ? "The verdict strength (no date lists)." : "Timing with exact dates."}
+4. ${scope ? "The reading for that day or period with practical timings." : yn ? "The verdict strength (no date lists)." : "Timing with exact dates."}
 5. "Your edge": the chart strength they should lean on (a yoga or the power planet).
 6. A 3-step plan: one practical step, one step on a POWER DAY${yn ? " or the ruling planet's weekday" : ""}, and one remedy with its mantra, weekday and colour from the data.
 Be aspirational and specific: show what is possible and how to get there. No filler such as "the stars suggest" or "everything happens for a reason". Every claim must come from the data below.
 ${state.voiceTurn ? (() => { const tn = toneFor(chartOf(prof())); return `VOICE: The user spoke this question and will HEAR your reply read aloud. Open with 2-3 short spoken sentences that answer directly, in a ${tn.label.toLowerCase()} tone, like ${tn.role}. Avoid tables and symbols; write numbers and dates the way people say them.\n`; })() : ""}Rules:
-${yn ? `This is a YES/NO question. Open with one bold verdict line (Yes / Likely / Possible with effort / Unlikely right now) that agrees with the ENGINE VERDICT, then give 3 short reasons from houses, lords, the running dasha and transits, then 1 practical step and 1 remedy. Do NOT list date windows, dasha date ranges or peak days unless the question itself names a time frame.` : `Time every prediction with all four Vimshottari levels: Mahadasha sets the theme, Antardasha the year, Pratyantardasha the main window (give exact start and end dates), and Sukshma the peak days inside it. Explain in one line why those lords connect to the question. Copy dates exactly from the data below and never calculate new ones; if the ENGINE WINDOWS section is present, base your windows on it.${p.unknownTime ? " The birth time is unknown, so say that Pratyantar and Sukshma dates are approximate." : ""}`}
+${scope ? `This question names a specific day or period: answer for that day or period only, following the TIME SCOPE section below${yn ? ", and open with one bold verdict line for that day or period" : ""}. Do not list long-range dasha windows.` : yn ? `This is a YES/NO question. Open with one bold verdict line (Yes / Likely / Possible with effort / Unlikely right now) that agrees with the ENGINE VERDICT, then give 3 short reasons from houses, lords, the running dasha and transits, then 1 practical step and 1 remedy. Do NOT list date windows, dasha date ranges or peak days unless the question itself names a time frame.` : `Time every prediction with all four Vimshottari levels: Mahadasha sets the theme, Antardasha the year, Pratyantardasha the main window (give exact start and end dates), and Sukshma the peak days inside it. Explain in one line why those lords connect to the question. Copy dates exactly from the data below and never calculate new ones; if the ENGINE WINDOWS section is present, base your windows on it.${p.unknownTime ? " The birth time is unknown, so say that Pratyantar and Sukshma dates are approximate." : ""}`}
 ${lock ? 'FREE PLAN: give the hook, the direct answer, the reasons and "your edge", but do NOT give any exact dates, date windows, peak days or power days (the app shows an unlock card for those). ' : ""}Say "most likely" rather than promising an outcome. Keep it under ${yn ? 230 : 320} words, use short paragraphs and at most one short bullet list, and use **bold** for the key point. Be encouraging and practical, never fear-inducing; no guarantees about death, illness or exact events. For health, legal or money decisions add one line suggesting a qualified professional.
 
 CHART DATA
 ${chartSummary(p, c)}
 SIGNATURE: ${signatureText(c, p)}
-POWER DAYS (next 30 days, good Tara from the birth star): ${powerDays(c, [p && c ? A.SIGN_LORD[(c.lagna.sign + ((topicOf(q, sub.rel && sub.rel.match) || GENERAL).houses[0]) - 1) % 12] : "Jupiter"]).map(d => `${d.label} (${d.tara})`).join("; ")}
-REMEDY DATA: ${Object.keys(LORD_MANTRA).map(k => `${k}: ${LORD_MANTRA[k]}, ${LORD_DAY[k]}, ${LORD_COLOUR[k]}`).join("; ")}${engineWindows(q, c, sub)}`;
+POWER DAYS (next 30 days, good Tara from the birth star): ${powerDays(c, [p && c ? A.SIGN_LORD[(c.lagna.sign + ((topicOf(q, sub.rel && sub.rel.match) || nativeTopic(q) || GENERAL).houses[0]) - 1) % 12] : "Jupiter"]).map(d => `${d.label} (${d.tara})`).join("; ")}
+REMEDY DATA: ${Object.keys(LORD_MANTRA).map(k => `${k}: ${LORD_MANTRA[k]}, ${LORD_DAY[k]}, ${LORD_COLOUR[k]}`).join("; ")}${scope || engineWindows(q, c, sub)}`;
   const hist = state.chat.slice(0, -1).filter(m => m.content && !m.content.startsWith("Reading the chart")).slice(-6);
   const input = [{ role: "user", content: sys + "\n\nThe conversation follows. Answer the last user message." }, { role: "assistant", content: "Understood. I will answer from this chart." }].concat(hist.map(m => ({ role: m.role, content: m.content })));
   const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), state.aiTimeout || 45000);
@@ -941,7 +1088,7 @@ REMEDY DATA: ${Object.keys(LORD_MANTRA).map(k => `${k}: ${LORD_MANTRA[k]}, ${LOR
     msg.content = (other ? `**Reading from ${p.name}'s chart**\n` : "") + (r.text || msg.content);
   } catch (e) {
     if (e && e.code === "not_granted") state.sample = null;
-    msg.content = offlineAnswer(q, c, p, sub, lock);
+    msg.content = composeOffline(q, c, p, sub, lock, L.code);
   } finally {
     markFreeFull(p);
     clearTimeout(timer);
@@ -955,9 +1102,9 @@ function pendingCard() {
   return `<div class="pend" id="pendform">
     <h3>Your ${rl}'s birth details</h3>
     <label for="o-name">Name</label><input id="o-name" placeholder="Your ${rl}'s name">
-    <div class="two"><div><label for="o-date">Date of birth</label><input type="date" id="o-date" max="${todayStr()}"></div>
+    <div class="two"><div><label for="o-date">Date of birth</label><input type="date" id="o-date" min="1800-01-01" max="${todayStr()}"></div>
     <div>${timeFields("o", "", "Time of birth")}</div></div>
-    <label class="check"><input type="checkbox" id="o-unknown"> Birth time not known</label>
+    <label class="check"><input type="checkbox" id="o-unknown" data-unknown="o"> I don't know the birth time</label>
     ${placeFields("o", { country: "India" })}
     <p class="err" id="o-err" role="alert"></p>
     <div class="row-actions"><button class="btn" type="button" data-act="pending-save">Save and answer</button><button class="btn ghost" type="button" data-act="pending-cancel">Cancel</button></div>
@@ -967,15 +1114,16 @@ function pendingCard() {
 function savePending() {
   const pd = state.pending, r = pd.rel, v = id => ($("#" + id).value || "").trim();
   const err = t => { $("#o-err").textContent = t; };
-  if (!v("o-name") || !v("o-date")) return err("Please enter the name and date of birth.");
-  if (!v("o-city")) return err("Please enter the city or town of birth.");
-  if (!v("o-lat")) placeChanged("o", "city");
+  const probs = birthProblems("o", { nameMsg: `Enter your ${r.rel.toLowerCase()}'s name.` });
+  showProblems("o-err", probs);
+  if (probs.length) return;
   const unknown = $("#o-unknown").checked, t = readTime("o");
   const p = { id: Date.now().toString(36), name: v("o-name"), gender: r.g, relation: r.rel, date: v("o-date"), time: unknown || !t ? "12:00" : t, unknownTime: unknown || !t, ...readPlace("o") };
-  if (isNaN(p.lat) || isNaN(p.lon) || isNaN(p.tz)) return err("Please choose a country and state for the birth place.");
+  if (isNaN(p.lat) || isNaN(p.lon) || isNaN(p.tz)) return showProblems("o-err", [["o-placebox", "Please choose the place of birth."]]);
   if (kundliCount() >= kundliLimit()) return err(limitMsgKundli() + " Open the Plus tab to upgrade.");
   if (!state.profiles.length) state.profiles.push({ ...EXAMPLE });
   state.profiles.push(p); store.set("profiles", state.profiles); store.set("active", state.active);
+  resetPicker("o");
   const q = pd.q; state.pending = null;
   state.chat.push({ role: "user", content: `${p.name}, born ${fmtDateStr(p.date)}${p.unknownTime ? "" : ", " + fmtTime(p.time)}, ${p.place}` });
   answerFor(q, { profile: p, rel: r });
@@ -987,37 +1135,41 @@ function personFields(pre, who) {
   return `<fieldset class="person"><legend>${who === "b" ? "Groom" : "Bride"}</legend>
     ${hasReal() ? `<label for="${who}-pick">Fill from saved</label><select id="${who}-pick" data-pick="${who}"><option value="">Choose a profile</option>${opts}</select>` : ""}
     <label for="${who}-name">Name</label><input id="${who}-name" value="${esc(pre.name)}">
-    <div class="two"><div><label for="${who}-date">Date of birth</label><input type="date" id="${who}-date" value="${pre.date}"></div>
+    <div class="two"><div><label for="${who}-date">Date of birth</label><input type="date" id="${who}-date" value="${pre.date}" min="1800-01-01" max="${todayStr()}"></div>
     <div>${timeFields(who, pre.time, "Time of birth")}</div></div>
     ${placeFields(who, pre)}
   </fieldset>`;
 }
 function readPerson(who) {
-  return { name: $(`#${who}-name`).value || (who === "b" ? "Groom" : "Bride"), date: $(`#${who}-date`).value, time: readTime(who) || "12:00", ...readPlace(who) };
+  const t = readTime(who);
+  return { name: $(`#${who}-name`).value.trim() || (who === "b" ? "Groom" : "Bride"), date: $(`#${who}-date`).value, time: t || "12:00", unknownTime: !t, ...readPlace(who) };
 }
 function computeMatch(b, g) {
   const cb = A.chart(b), cg = A.chart(g);
   const r = A.gunaMilan({ moonLon: cb.planets.Moon.lon }, { moonLon: cg.planets.Moon.lon });
   return { b, g, cb, cg, r };
 }
+function matchWaitCard() {
+  return `<section class="card matchwait">
+    <div class="score-ring" style="--v:0"><div><span class="big num">?</span><span class="small">of 36 gunas</span></div></div>
+    <h3>Your guna score appears here</h3>
+    <p class="muted">Enter the birth details of both people and tap <b>Match kundlis</b>. You get all 8 kootas, Mangal dosha, Nadi and Bhakoot checks, free.</p>
+  </section>`;
+}
 function viewMatch() {
   if (!state.match) {
-    const real = state.profiles, me = hasReal() ? prof() : null;
+    const real = state.profiles.filter(x => !x.needsPlace), me = hasReal() && !prof().needsPlace ? prof() : null;
     const blank = { name: "", date: "", time: "", country: "India" };
     const other = me ? real.find(x => x !== me && x.gender && x.gender !== me.gender && ["F", "M"].includes(x.gender)) : null;
-    if (me && other && ["F", "M"].includes(me.gender)) state.match = computeMatch(me.gender === "M" ? me : other, me.gender === "M" ? other : me);
+    if (me && other && ["F", "M"].includes(me.gender) && !state.matchCleared) state.match = computeMatch(me.gender === "M" ? me : other, me.gender === "M" ? other : me);
     else {
       const b = me && me.gender !== "F" ? me : blank, g = me && me.gender === "F" ? me : blank;
       return `<div class="grid">
   <section class="card">
     <h2>Kundli matching <span class="hi" lang="hi">गुण मिलान</span></h2>
-    <form id="matchform" novalidate>${personFields(b, "b")}${personFields(g, "g")}<button class="btn" type="button" data-act="match">Match kundlis</button></form>
+    <form id="matchform" novalidate>${personFields(b, "b")}${personFields(g, "g")}<p class="err" id="m-err" role="alert"></p><button class="btn" type="button" data-act="match">Match kundlis</button><p class="note">If a birth time is not known, noon is used and the Moon sign may be uncertain.</p></form>
   </section>
-  <section class="card matchwait">
-    <div class="score-ring" style="--v:0"><div><span class="big num">?</span><span class="small">of 36 gunas</span></div></div>
-    <h3>Your guna score appears here</h3>
-    <p class="muted">Enter the birth details of both people and tap <b>Match kundlis</b>. You get all 8 kootas, Mangal dosha, Nadi and Bhakoot checks, free.</p>
-  </section></div>`;
+  ${matchWaitCard()}</div>`;
     }
   }
   const { b, g, cb, cg, r } = state.match;
@@ -1028,9 +1180,9 @@ function viewMatch() {
   return `<div class="grid">
   <section class="card">
     <h2>Kundli matching <span class="hi" lang="hi">गुण मिलान</span></h2>
-    <form id="matchform" novalidate>${personFields(b, "b")}${personFields(g, "g")}<button class="btn" type="button" data-act="match">Match kundlis</button></form>
+    <form id="matchform" novalidate>${personFields(b, "b")}${personFields(g, "g")}<p class="err" id="m-err" role="alert"></p><button class="btn" type="button" data-act="match">Match kundlis</button><p class="note">If a birth time is not known, noon is used and the Moon sign may be uncertain.</p></form>
   </section>
-  <section class="card">
+  <section class="card matchresult">
     <div class="match-top">
       <div class="score-ring ${lvl}" style="--v:${Math.round(v / 36 * 100)}"><div><span class="big num">${v}</span><span class="small">of 36 gunas</span></div></div>
       <div><h3>${verdict}</h3><p class="muted">${esc(b.name)}: ${A.SIGNS[cb.moonSign]} Moon, ${cb.nak.name}<br>${esc(g.name)}: ${A.SIGNS[cg.moonSign]} Moon, ${cg.nak.name}</p></div>
@@ -1072,9 +1224,9 @@ function viewPlus() {
   return `${trialEnded() && ps.id === "free" ? `<div class="banner"><div><strong>Your free trial has ended.</strong> Keep your exact dates and power days with a yearly plan from ₹${Math.round(PLANS.silver.y / 12)} a month.</div></div>` : ""}<section class="card">
       <div class="card-head"><h2>Your plan: ${cp.name}${onTrial() ? " (free trial)" : ""}</h2>${ps.expires ? `<span class="pill good">${onTrial() ? "Trial ends" : "Active until"} ${new Date(ps.expires).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>` : ""}${ps.expired ? `<span class="pill warn">${PLANS[ps.expired].name} plan expired</span>` : ""}</div>
       <dl class="kv"><dt>Questions</dt><dd>${planState().id === "free" ? `<b class="num">${freeLeft()}</b> free left · <b class="num">${qCredits()}</b> credits` : `${qCredits()} extra credits`}</dd><dt>Voice minutes left</dt><dd><b class="num">${fmtMin(voiceLeftSec())}</b></dd><dt>Kundlis saved</dt><dd><b class="num">${kundliCount()}</b> of ${fmtLimit(kundliLimit())}</dd>
-      ${(profs.length ? profs : [prof()]).map(p => `<dt>Questions for ${esc(p.name)}</dt><dd>${cp.questions === Infinity ? "Unlimited" : `<b class="num">${usedQ(p.id)}</b> of ${cp.questions} used this month`}</dd>`).join("")}</dl>
+      ${ps.id === "free" ? `<dt>Free questions used</dt><dd><b class="num">${Math.min(PLANS.free.questions, store.get("freeQ", 0))}</b> of ${PLANS.free.questions} (for this device, not per month)</dd>` : (profs.length ? profs : [prof()]).map(p => `<dt>Questions for ${esc(p.name)}</dt><dd>${cp.questions === Infinity ? "Unlimited" : `<b class="num">${usedQ(p.id)}</b> of ${cp.questions} used this month`}</dd>`).join("")}</dl>
       <div class="redeem"><label for="code">Activation code</label><div class="ask"><input id="code" placeholder="TA-XXX-XXXX-XXXX" autocomplete="off" spellcheck="false"><button class="btn" type="button" data-act="redeem">Apply</button></div><p id="code-msg" role="status"></p>
-      <p class="note">After payment you receive a code. Enter it here to unlock your plan on this device.</p></div>
+      <p class="note">After payment you receive a code. Enter it here to unlock your plan on this device.${API ? ` Each code works on one phone or browser. Device ID for support: <span class="code" id="device-id">${esc(DEVICE.id || "…")}</span>` : ""}</p></div>
     </section>
   <section class="plans four">${card("free")}${card("silver")}${card("gold", true)}${card("unlimited")}</section>
   <section class="card addon"><div><h3>Question packs</h3><p class="muted">No subscription needed: ${QPACKS.map(pk => `${pk.q} questions for ₹${pk.price}`).join(" or ")}. Credits never expire and work for every kundli.</p></div><div class="row-actions">${packButtons()}</div></section>
@@ -1107,19 +1259,20 @@ function viewPlus() {
 }
 
 /* ---------- 12-hour time picker ---------- */
-function timeFields(px, val, label) {
+function timeFields(px, val, label, off) {
   let h = "", m = "", ap = "AM";
   if (val) { const [H, M] = val.split(":").map(Number); ap = H >= 12 ? "PM" : "AM"; h = (H % 12) || 12; m = M; }
   const hrs = Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}"${n === h ? " selected" : ""}>${n}</option>`).join("");
   const mins = Array.from({ length: 60 }, (_, i) => i).map(n => `<option value="${n}"${n === m ? " selected" : ""}>${String(n).padStart(2, "0")}</option>`).join("");
   return `<div class="tpick-wrap"><span class="lbl" id="${px}-tlabel">${label}</span><div class="tpick" role="group" aria-labelledby="${px}-tlabel">
-    <label class="sr" for="${px}-hh">Hour</label><select id="${px}-hh"><option value="">Hr</option>${hrs}</select>
-    <label class="sr" for="${px}-mm">Minute</label><select id="${px}-mm"><option value=""${m === "" ? " selected" : ""}>Min</option>${mins}</select>
-    <label class="sr" for="${px}-ap">AM or PM</label><select id="${px}-ap"><option${ap === "AM" ? " selected" : ""}>AM</option><option${ap === "PM" ? " selected" : ""}>PM</option></select>
+    <label class="sr" for="${px}-hh">Hour</label><select id="${px}-hh"${off ? " disabled" : ""}><option value="">Hr</option>${hrs}</select>
+    <label class="sr" for="${px}-mm">Minute</label><select id="${px}-mm"${off ? " disabled" : ""}><option value=""${m === "" ? " selected" : ""}>Min</option>${mins}</select>
+    <label class="sr" for="${px}-ap">AM or PM</label><select id="${px}-ap"${off ? " disabled" : ""}><option${ap === "AM" ? " selected" : ""}>AM</option><option${ap === "PM" ? " selected" : ""}>PM</option></select>
   </div></div>`;
 }
 function readTime(px) {
-  const h = $(`#${px}-hh`).value; if (!h) return "";
+  const hEl = $(`#${px}-hh`); if (!hEl || hEl.disabled) return "";
+  const h = hEl.value; if (!h) return "";
   const m = +($(`#${px}-mm`).value || 0), ap = $(`#${px}-ap`).value;
   let H = (+h) % 12 + (ap === "PM" ? 12 : 0);
   return `${String(H).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -1138,23 +1291,25 @@ function formFields(p, withRel) {
       <div class="${withRel ? "two" : "one"}"><div><span class="lbl" id="f-glabel">Gender</span><input type="hidden" id="f-gender" value="${g}">
         <div class="seg gsel" role="group" aria-labelledby="f-glabel">${[["F", "Female"], ["M", "Male"], ["O", "Other"]].map(([v, l]) => `<button type="button" data-gsel="${v}" aria-pressed="${g === v}"${g === v ? ' class="on"' : ""}>${l}</button>`).join("")}</div></div>
       ${withRel ? `<div><label for="f-rel">Relation to you</label><select id="f-rel">${RELS_LIST.map(r => `<option${(p.relation || "Self") === r ? " selected" : ""}>${r}</option>`).join("")}</select></div>` : `<input type="hidden" id="f-rel" value="Self">`}</div>
-      <div class="two"><div><label for="f-date">Date of birth</label><input type="date" id="f-date" value="${p.date}" max="${todayStr()}"></div>
-      <div>${timeFields("f", p.unknownTime ? "" : p.time, "Time of birth")}</div></div>
-      <label class="check"><input type="checkbox" id="f-unknown"${p.unknownTime ? " checked" : ""}> I don't know my birth time</label>
+      <div class="two"><div><label for="f-date">Date of birth</label><input type="date" id="f-date" value="${esc(p.date || "")}" min="1800-01-01" max="${todayStr()}"></div>
+      <div>${timeFields("f", p.unknownTime ? "" : p.time, "Time of birth", p.unknownTime)}</div></div>
+      <label class="check"><input type="checkbox" id="f-unknown" data-unknown="f"${p.unknownTime ? " checked" : ""}> I don't know my birth time</label>
       ${placeFields("f", p)}`;
 }
 function openForm(edit) {
   const p = edit ? prof() : { name: "", gender: "", date: "", time: "", place: "", country: "India", state: "", city: "" };
+  resetPicker("f");
   $("#modal").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ftitle">
     <h2 id="ftitle">${edit ? "Edit birth details" : "Add birth details"}</h2>
     <p class="muted">Exact birth time gives an accurate Lagna and dasha dates. Your details stay on this device.</p>
     <form id="pform" novalidate>${formFields(p, true)}
       <p class="err" id="f-err" role="alert"></p>
-      <div class="row-actions"><button class="btn" type="button" data-act="save-profile">Save and see my chart</button><button class="btn ghost" type="button" data-act="close">Cancel</button>${edit && !p.example ? '<button class="btn ghost danger" type="button" data-act="delete">Delete</button>' : ""}</div>
+      <div class="row-actions"><button class="btn" type="button" data-act="save-profile">${edit ? "Save changes" : "Save and see my chart"}</button><button class="btn ghost" type="button" data-act="close">Cancel</button>${edit && !p.example ? `<button class="btn ghost danger" type="button" data-act="delete" aria-controls="del-confirm">Delete ${esc(p.name)}'s kundli</button>` : ""}</div>
+      ${edit && !p.example ? `<div class="confirm" id="del-confirm" role="alertdialog" aria-labelledby="del-q" hidden><p id="del-q"><b>Delete ${esc(p.name)}'s kundli?</b> The birth details and chat for this person are removed from this device. This cannot be undone.</p><div class="row-actions"><button class="btn danger" type="button" data-act="delete-yes">Yes, delete</button><button class="btn ghost" type="button" data-act="delete-no">Keep it</button></div></div>` : ""}
     </form></div>`;
   $("#modal").hidden = false;
   $("#modal").dataset.edit = edit ? "1" : "";
-  setTimeout(() => $("#f-name").focus(), 30);
+  setTimeout(() => { const el = $("#f-name"); if (el) el.focus(); }, 30);
 }
 function openLimit() {
   $("#modal").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ltitle">
@@ -1172,7 +1327,7 @@ function openFresh() {
     <h2 id="ftitle2">Start as a new person?</h2>
     <p>This erases from this device:</p>
     <ul><li>${n} saved kundli${n === 1 ? "" : "s"}</li><li>Your plan, trial and any activation codes applied here</li><li>Report credits, voice minutes and question counts</li><li>Chat, language and voice settings</li></ul>
-    <p class="muted">It cannot be undone. Codes already used can be entered again afterwards.</p>
+    <p class="muted">It cannot be undone. A plan bought with an activation code can be restored on this device until its original end date, but the free trial and question, report and voice credits cannot be used again.</p>
     <div class="row-actions"><button class="btn danger" data-act="fresh-yes">Erase and start fresh</button><button class="btn ghost" data-act="close">Cancel</button></div></div>`;
   $("#modal").hidden = false;
 }
@@ -1186,119 +1341,68 @@ function startFresh() {
   setTimeout(() => startHere(), 300);
 }
 function closeForm() { $("#modal").hidden = true; $("#modal").innerHTML = ""; }
-/* ---------- birth place: country, state, city ---------- */
-function resolvePre(pre) {
-  if (pre.country) return { country: pre.country, state: pre.state || "", city: pre.city || "" };
-  const hit = pre.place ? findPlace(String(pre.place).split(",")[0], "", "") : null;
-  return hit ? { country: hit[2], state: hit[1], city: hit[0] } : { country: "India", state: "", city: "" };
+/* ---------- form validation (all forms) ---------- */
+/* returns a list of [field id, message] problems for a person, in the order the fields appear */
+function birthProblems(px, opts = {}) {
+  const v = id => ((document.getElementById(id) || {}).value || "").trim(), out = [];
+  if (opts.name !== false && !v(px + "-name")) out.push([px + "-name", opts.nameMsg || "Enter the name."]);
+  if (opts.gender && !v(px + "-gender")) out.push([px + "-glabel", "Choose a gender (it sets the voice and Kundli matching)."]);
+  const d = v(px + "-date");
+  if (!d) out.push([px + "-date", "Enter the date of birth."]);
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < "1800-01-01") out.push([px + "-date", "Enter a valid date of birth (from the year 1800)."]);
+  else if (d > todayStr()) out.push([px + "-date", "The date of birth cannot be in the future."]);
+  const unk = document.getElementById(px + "-unknown");
+  if (!readTime(px) && !(unk && unk.checked)) out.push([px + "-hh", unk ? "Enter the time of birth, or tick “I don't know my birth time”." : "Enter the time of birth."]);
+  const pe = placeError(px);
+  if (pe) out.push([px + "-placebox", pe]);
+  return out;
 }
-function placeFields(px, pre) {
-  const r = resolvePre(pre), sts = statesOf(r.country);
-  const st = sts.includes(r.state) ? r.state : "";
-  const hasCoords = pre.lat !== undefined && pre.lat !== "";
-  const tzBase = hasCoords ? +pre.tz : "";
-  return `<div class="placebox" id="${px}-placebox">
-    <label for="${px}-city">Place of birth (city or town)</label>
-    <input id="${px}-city" list="${px}-cities" data-place="${px}" value="${esc(r.city)}" placeholder="Start typing any city: Mumbai, Patna, London…" autocomplete="off">
-    <datalist id="${px}-cities">${cityOptions(r.country, st, "")}</datalist>
-    <input type="hidden" id="${px}-iana" value="${esc(pre.iana || "")}">
-    <p class="note pnote" id="${px}-pnote" role="status"></p>
-    <details class="more"${r.country !== "India" ? " open" : ""}><summary>Born outside India, or town not listed?</summary>
-      <div class="two">
-        <div><label for="${px}-country">Country</label><select id="${px}-country" data-place="${px}">${COUNTRIES.map(c => `<option${c === r.country ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
-        <div><label for="${px}-state">State / province</label><select id="${px}-state" data-place="${px}"><option value="">Choose state</option>${sts.map(s => `<option${s === st ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></div>
-      </div>
-      <div class="three"><div><label for="${px}-lat">Latitude</label><input id="${px}-lat" type="number" step="0.001" value="${hasCoords ? pre.lat : ""}"></div><div><label for="${px}-lon">Longitude</label><input id="${px}-lon" type="number" step="0.001" value="${hasCoords ? pre.lon : ""}"></div><div><label for="${px}-tz">UTC offset</label><input id="${px}-tz" type="number" step="0.01" value="${tzBase}"></div></div>
-      <p class="note">Filled in automatically from your city. The time zone, including daylight saving and old historical changes, is worked out for your exact birth date. Change these only if your town is not listed.</p>
-    </details>
-  </div>`;
-}
-function cityOptions(country, st, q) {
-  const n = norm(q), pool = citiesOf(country, st);
-  let list = !n ? pool.slice(0, 60) : [...pool.filter(c => norm(c[0]).startsWith(n)), ...pool.filter(c => !norm(c[0]).startsWith(n) && norm(c[0]).includes(n))].slice(0, 60);
-  const dup = new Set(), many = new Set();
-  list.forEach(c => { const k = norm(c[0]); dup.has(k) ? many.add(k) : dup.add(k); });
-  return list.map(c => `<option value="${esc(many.has(norm(c[0])) || st === "" && pool.length > 60 && c[1] ? c[0] + ", " + c[1] : c[0])}">`).join("");
-}
-function splitCity(raw, country) {
-  const parts = String(raw || "").split(",").map(x => x.trim()).filter(Boolean);
-  if (parts.length < 2) return { city: parts[0] || "", state: "" };
-  const sts = statesOf(country), st = parts.slice(1).find(x => sts.includes(x)) || "";
-  return { city: parts[0], state: st };
-}
-function setPlaceFields(px, rec, note) {
-  const date = ($(`#${px}-date`) || {}).value, time = typeof readTime === "function" ? readTime(px) : "";
-  $(`#${px}-lat`).value = rec[3]; $(`#${px}-lon`).value = rec[4];
-  $(`#${px}-iana`).value = rec[6] || "";
-  const tz = placeTz(rec, date, time); $(`#${px}-tz`).value = isNaN(tz) ? "" : tz;
-  if (note !== undefined) $(`#${px}-pnote`).textContent = note;
-}
-function fillStates(px, country, keep) {
-  const sEl = $(`#${px}-state`); sEl.innerHTML = `<option value="">Choose state</option>` + statesOf(country).map(s => `<option${s === keep ? " selected" : ""}>${esc(s)}</option>`).join("");
-}
-let placeSeq = 0;
-function placeChanged(px, which) {
-  const cEl = $(`#${px}-country`), sEl = $(`#${px}-state`), cityEl = $(`#${px}-city`);
-  if (!cEl) return;
-  const seq = ++placeSeq, country = cEl.value;
-  if (which === "country") {
-    fillStates(px, country, ""); cityEl.value = "";
-    if (!PLACE_DATA[country]) { $(`#${px}-pnote`).textContent = "Loading cities…"; loadCountry(country).then(ok => { if ($(`#${px}-country`) && cEl.value === country) { fillStates(px, country, sEl.value); $(`#${px}-cities`).innerHTML = cityOptions(country, sEl.value, ""); $(`#${px}-pnote`).textContent = ok ? "" : "Could not load this country's cities. Type your town and enter its coordinates below."; } }); }
-  }
-  if (which === "lat" || which === "lon" || which === "tz") { if (which === "tz") $(`#${px}-iana`).value = ""; return; }
-  if (which === "date" || which === "ap" || which === "hh" || which === "mm") { const iana = $(`#${px}-iana`).value; if (iana) { const t = tzOffset(iana, $(`#${px}-date`).value, readTime(px)); if (!isNaN(t)) $(`#${px}-tz`).value = t; } return; }
-  const { city, state: typedState } = splitCity(cityEl.value, country);
-  if (typedState && sEl.value !== typedState) sEl.value = typedState;
-  $(`#${px}-cities`).innerHTML = cityOptions(country, which === "city" ? (typedState || "") : sEl.value, city);
-  const hit = findPlace(city, sEl.value, country);
-  const note = $(`#${px}-pnote`);
-  if (hit) {
-    if (sEl.value !== hit[1]) { if (![...sEl.options].some(o => o.value === hit[1])) fillStates(px, country, hit[1]); sEl.value = hit[1]; }
-    setPlaceFields(px, hit, `✓ ${hit[0]}${hit[1] ? ", " + hit[1] : ""}, ${hit[2]} · ${Math.abs(hit[3]).toFixed(2)}°${hit[3] >= 0 ? "N" : "S"}, ${Math.abs(hit[4]).toFixed(2)}°${hit[4] >= 0 ? "E" : "W"}`);
-    return;
-  }
-  const ref = citiesOf(country, sEl.value)[0] || citiesOf(country)[0];
-  if (ref) setPlaceFields(px, ref);
-  if (!city) { note.textContent = ""; return; }
-  note.textContent = ref ? `Looking for ${city}…` : "";
-  const fallback = () => { if (seq !== placeSeq) return; note.textContent = ref ? `${city} is not in our list, so we are using ${ref[0]}${ref[1] ? " (" + ref[1] + ")" : ""}. Pick the nearest town from the suggestions, or open the box below and enter your town's coordinates for an exact Lagna.` : `${city} is not in our list. Choose the country, or enter coordinates below.`; };
-  if (norm(city).length < 3) return fallback();
-  (PLACE_DATA[country] ? Promise.resolve(false) : loadCountry(country)).then(loaded => {
-    if (seq !== placeSeq) return;
-    if (loaded) return placeChanged(px, "city2");
-    return loadBig().then(big => {
-      if (seq !== placeSeq || !big) return fallback();
-      const n = norm(city), b = big.find(x => norm(x[0]) === n && x[2] !== country);
-      if (!b) return fallback();
-      cEl.value = b[2]; fillStates(px, b[2], b[1]); note.textContent = `Found ${b[0]} in ${b[2]}. Loading…`;
-      loadCountry(b[2]).then(() => { if (seq !== placeSeq) return; fillStates(px, b[2], b[1]); placeChanged(px, "city2"); });
-    });
-  });
-}
-function readPlace(px) {
-  const country = $(`#${px}-country`).value, raw = $(`#${px}-city`).value.trim(), st = $(`#${px}-state`).value;
-  const city = splitCity(raw, country).city || raw;
-  const iana = ($(`#${px}-iana`) || {}).value || "";
-  const lat = parseFloat($(`#${px}-lat`).value), lon = parseFloat($(`#${px}-lon`).value);
-  const date = ($(`#${px}-date`) || {}).value, time = readTime(px);
-  let tz = iana ? tzOffset(iana, date, time) : NaN; if (isNaN(tz)) tz = parseFloat($(`#${px}-tz`).value);
-  return { city, state: st, country, dst: false, iana, place: [city, st, country].filter(Boolean).join(", "), lat, lon, tz };
+function showProblems(errId, probs, lead) {
+  const el = document.getElementById(errId); if (!el) return;
+  document.querySelectorAll(".field-bad").forEach(x => x.classList.remove("field-bad"));
+  if (!probs.length) { el.textContent = ""; return; }
+  el.innerHTML = (lead ? esc(lead) + " " : "") + (probs.length === 1 ? esc(probs[0][1]) : `Please fix ${probs.length} things:<ul>${probs.map(p => `<li>${esc(p[1])}</li>`).join("")}</ul>`);
+  probs.forEach(([id]) => { const f = document.getElementById(id); if (f) (f.closest(".placebox, .tpick-wrap, .gsel") || f).classList.add("field-bad"); });
+  const first = document.getElementById(probs[0][0]);
+  if (first) { const box = first.classList && first.classList.contains("placebox") ? first.querySelector("input:not([disabled]):not([type=hidden])") : first.id && first.id.endsWith("-glabel") ? first.parentElement.querySelector("button") : first; try { (box || first).focus({ preventScroll: true }); (box || first).scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {} }
 }
 function saveForm() {
   const v = id => $("#" + id).value.trim();
-  const unknown = $("#f-unknown").checked;
-  if (!v("f-city")) { $("#f-err").textContent = "Please enter your city or town of birth."; return; }
-  if (!v("f-lat")) placeChanged("f", "city");
-  const p = { id: Date.now().toString(36), name: v("f-name"), gender: v("f-gender"), relation: v("f-rel"), date: v("f-date"), time: unknown ? "12:00" : (readTime("f") || "12:00"), unknownTime: unknown || !readTime("f"), ...readPlace("f") };
-  if (!p.name || !p.date) { $("#f-err").textContent = "Please enter a name and date of birth."; return; }
-  if (isNaN(p.lat) || isNaN(p.lon) || isNaN(p.tz)) { $("#f-err").textContent = "Please choose a country and state, or open Coordinates and time zone to enter them."; return; }
+  const probs = birthProblems("f", { gender: true, nameMsg: "Enter your full name." });
+  showProblems("f-err", probs);
+  if (probs.length) return;
+  const unknown = $("#f-unknown").checked, t = readTime("f");
+  const pl = readPlace("f");
+  const p = { id: Date.now().toString(36), name: v("f-name"), gender: v("f-gender"), relation: v("f-rel"), date: v("f-date"), time: unknown || !t ? "12:00" : t, unknownTime: unknown || !t, ...pl };
+  if (isNaN(p.lat) || isNaN(p.lon) || isNaN(p.tz)) { showProblems("f-err", [["f-placebox", "Please choose the place of birth."]]); return; }
   const edit = $("#modal").dataset.edit === "1" && !prof().example;
   if (edit) { p.id = prof().id; state.profiles[state.active] = p; }
   else { state.profiles.push(p); state.active = state.profiles.length - 1; }
   store.set("profiles", state.profiles); store.set("active", state.active);
+  resetPicker("f");
   state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; state.openMd = null; state.openAd = null; state.openPd = null;
   if (state.after) { state.tab = state.after; state.after = null; }
   closeForm(); render(); window.scrollTo(0, 0);
+}
+/* profiles saved by older versions: fill in missing coordinates from the place name, or flag them for re-entry */
+function migrateProfiles() {
+  let changed = false;
+  state.profiles = (Array.isArray(state.profiles) ? state.profiles : []).filter(p => p && typeof p === "object").map(p => {
+    p = { ...p };
+    if (!p.id) { p.id = "p" + hash(JSON.stringify(p)).toString(36); changed = true; }
+    if (p.country === "India" && p.state && canonInState(p.state) && canonInState(p.state) !== p.state) { p.state = canonInState(p.state); changed = true; }
+    const bad = x => x === undefined || x === null || x === "" || isNaN(+x);
+    if (bad(p.lat) || bad(p.lon) || bad(p.tz)) {
+      const L = resolveLegacyPlace(p.city || p.place);
+      if (L && (!p.date || /^\d{4}-\d{2}-\d{2}$/.test(p.date))) { Object.assign(p, L, { tz: tzOffset(L.iana, p.date, p.time), place: `${L.city}, ${L.state}, India` }); delete p.needsPlace; changed = true; }
+      else if (!p.needsPlace) { p.needsPlace = true; changed = true; }
+    }
+    if (!p.date || !/^\d{4}-\d{2}-\d{2}$/.test(p.date)) { if (!p.needsPlace) changed = true; p.needsPlace = true; }
+    if (!p.time || !/^\d{1,2}:\d{2}$/.test(p.time)) { p.time = "12:00"; p.unknownTime = true; changed = true; }
+    return p;
+  });
+  if (state.active >= state.profiles.length || state.active < 0 || isNaN(+state.active)) { state.active = 0; changed = true; }
+  if (changed) { store.set("profiles", state.profiles); store.set("active", state.active); }
 }
 
 /* ---------- events ---------- */
@@ -1307,9 +1411,14 @@ function safeSave() {
   catch (err) { const el = $("#f-err"); if (el) el.textContent = "Something went wrong while saving. Please check the date, time and place, then try again."; console.error(err); }
 }
 function doMatch() {
-  try { state.match = computeMatch(readPerson("b"), readPerson("g")); render(); }
-  catch (err) { console.error(err); }
+  const pb = birthProblems("b", { name: false }), pg = birthProblems("g", { name: false });
+  const probs = [...pb.filter(x => x[1] !== "Enter the time of birth.").map(x => [x[0], "Groom: " + x[1]]), ...pg.filter(x => x[1] !== "Enter the time of birth.").map(x => [x[0], "Bride: " + x[1]])];
+  if (probs.length) { state.match = null; state.matchCleared = true; const box = $(".matchresult"); if (box) box.outerHTML = matchWaitCard(); showProblems("m-err", probs, "Please enter the date of birth and place for both people."); return; }
+  try { state.match = computeMatch(readPerson("b"), readPerson("g")); keepPickers(["b", "g"]); render(); }
+  catch (err) { console.error(err); showProblems("m-err", [["b-date", "Could not compute the match. Please check both birth details."]]); }
 }
+/* keep the Match pickers' choices across the re-render that shows the result */
+function keepPickers(pxs) { pxs.forEach(px => { const P = PICK[px]; if (P) { const R = readPlace(px); P.key = JSON.stringify(["", R.city || "", R.state || "", R.country || "", R.lat ?? "", R.lon ?? ""]); P.keepUntil = true; } }); }
 function doAsk() { const el = $("#q"); if (!el) return; const q = el.value; el.value = ""; ask(q); }
 async function copy(text, id) {
   const el = $("#" + id);
@@ -1319,8 +1428,8 @@ async function copy(text, id) {
 document.addEventListener("click", e => {
   const t = e.target.closest("button, [data-goto]");
   if (!t) return;
-  if (t.dataset.tab) { state.tab = t.dataset.tab; render(); window.scrollTo(0, 0); return; }
-  if (t.dataset.goto) { if (!$("#modal").hidden) closeForm(); state.tab = t.dataset.goto; render(); window.scrollTo(0, 0); return; }
+  if (t.dataset.tab) { goTab(t.dataset.tab); return; }
+  if (t.dataset.goto) { if (!$("#modal").hidden) closeForm(); goTab(t.dataset.goto); return; }
   if (t.dataset.gsel !== undefined) { const f = t.closest("form") || document; f.querySelector("#f-gender").value = t.dataset.gsel; t.parentElement.querySelectorAll("button").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); return; }
   if (t.dataset.act === "start" || ((t.id === "add-profile" || t.dataset.act === "add") && !hasReal())) return startHere(t.dataset.then);
   if (t.id === "add-profile" || t.dataset.act === "add") { if (kundliCount() >= kundliLimit()) return openLimit(); return openForm(false); }
@@ -1333,7 +1442,10 @@ document.addEventListener("click", e => {
   if (t.dataset.act === "pending-cancel") { state.pending = null; state.chat.push({ role: "assistant", content: "No problem. Ask again whenever you have the birth details." }); render(); return; }
   if (t.dataset.act === "pending-new") { const pd = state.pending; state.pending = { q: pd.q, rel: pd.rel }; render(); return; }
   if (t.dataset.subj) { const p = profiles().find(x => x.id === t.dataset.subj), pd = state.pending; if (p && pd) { state.pending = null; state.chat.push({ role: "user", content: p.name }); answerFor(pd.q, { profile: p, rel: pd.rel }); } return; }
-  if (t.dataset.act === "delete") { state.profiles.splice(state.active, 1); state.active = 0; store.set("profiles", state.profiles); store.set("active", 0); state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; closeForm(); render(); return; }
+  if (t.dataset.act === "delete") { const c = $("#del-confirm"); if (c) { c.hidden = false; t.setAttribute("aria-expanded", "true"); const y = c.querySelector("[data-act=delete-no]"); if (y) y.focus(); } return; }
+  if (t.dataset.act === "delete-no") { const c = $("#del-confirm"); if (c) c.hidden = true; const d = $("[data-act=delete]"); if (d) { d.setAttribute("aria-expanded", "false"); d.focus(); } return; }
+  if (t.dataset.act === "delete-yes") { state.profiles.splice(state.active, 1); state.active = 0; store.set("profiles", state.profiles); store.set("active", 0); state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; resetPicker("f"); closeForm(); render(); return; }
+  if (t.dataset.act === "edit") { if (!hasReal()) return startHere(); return openForm(true); }
   if (t.dataset.kstyle) { state.kstyle = t.dataset.kstyle; store.set("kstyle", t.dataset.kstyle); render(); return; }
   if (t.dataset.kmode) { state.kmode = t.dataset.kmode; render(); return; }
   if (t.dataset.md !== undefined) { const i = +t.dataset.md; state.openMd = state.openMd === i ? -1 : i; render(); return; }
@@ -1347,17 +1459,17 @@ document.addEventListener("click", e => {
   if (t.dataset.speak !== undefined) {
     if (Voice.speaking) { stopVoice(); render(); return; }
     const i = +t.dataset.speak, txt = i >= 0 ? state.chat[i].content : t.closest(".msg").innerText.replace(/Listen$/, "");
-    speakAnswer(txt).then(r => { if (r.reason === "limit") { state.chat.push({ role: "assistant", content: `Your voice minutes for this month are used up. Add **${VOICE_PACK_MIN} minutes for ₹${VOICE_PACK_PRICE}** or move to Gold for 30 minutes a month.`, upsell: true }); render(); } else if (r.reason === "novoice") setMicNote(`No ${voiceLang().name} voice is available on this device yet.`); });
+    speakAnswer(txt, i >= 0 ? state.chat[i].lang : null).then(r => { if (r.reason === "limit") { state.chat.push({ role: "assistant", content: `Your voice minutes for this month are used up. Add **${VOICE_PACK_MIN} minutes for ₹${VOICE_PACK_PRICE}** or move to Gold for 30 minutes a month.`, upsell: true }); render(); } else if (r.reason === "novoice") setMicNote(`No ${voiceLang().name} voice is available on this device yet.`); });
     return;
   }
-  if (t.dataset.act === "trial") { const r = startTrial(); store.set("inviteSeen", true); state.chat.push({ role: "assistant", content: r.msg }); render(); if (state.tab !== "ask") alertMsg(r.msg); return; }
+  if (t.dataset.act === "trial") { const tab = state.tab; Promise.resolve(startTrial()).then(r => { store.set("inviteSeen", true); state.chat.push({ role: "assistant", content: r.msg }); render(); if (tab !== "ask") alertMsg(r.msg); }); return; }
   if (t.dataset.report) return openReport(t.dataset.report);
   if (t.dataset.act === "report-unlock") { const p = prof(); if (unlockReport(t.dataset.key, p)) openReport(t.dataset.key); return; }
   if (t.dataset.act === "copy-report") return copy(reportText(t.dataset.key), "copied-rep");
   if (t.dataset.act === "print-report") { try { window.print(); } catch (e) {} return; }
   if (t.dataset.act === "share-invite") return copy(inviteText(), "copied-inv");
   if (t.dataset.act === "invite-dismiss") { store.set("inviteSeen", true); render(); return; }
-  if (t.dataset.act === "share-power") { const p = prof(), c = chartOf(p), cur = A.currentDasha(c, nowJ()); return copy(`My power days this month from Spatik Astro: ${powerDays(c, [cur.md.lord, cur.ad.lord, cur.pd.lord], 3).map(x => x.label).join(", ")}. Find yours free: ${location.href.split("#")[0]}#ref-${myRefCode().slice(6).toLowerCase()}`, "copied-pow"); }
+  if (t.dataset.act === "share-power") { const p = prof(), c = chartOf(p), cur = A.currentDasha(c, nowJ()); return copy(`My power days this month from Spatik Astro: ${powerDays(c, [cur.md.lord, cur.ad.lord, cur.pd.lord], 3).map(x => x.label).join(", ")}. Find yours free: ${location.href.split("#")[0]}#ref-${refPart().toLowerCase()}`, "copied-pow"); }
   if (t.dataset.act === "soon") { { const el = $("#soon-msg"), m = `Online payment is opening soon. ${CONTACT}, and we will send you an activation code.`; if (el && !t.closest("#modal")) el.textContent = m; else { const box = document.createElement("p"); box.className = "note"; box.textContent = m; (t.closest(".lock") || t.parentElement).after(box); } } return; }
   if (t.dataset.act === "share-day") {
     const p = prof(), c = chartOf(p), d = dailyFor(c, todayStr(), deviceTz());
@@ -1368,17 +1480,15 @@ document.addEventListener("click", e => {
 document.addEventListener("change", e => {
   const t = e.target;
   if (t.id === "vgender") { store.set("voiceGender", t.value); render(); return; }
-  if (t.id === "lang") { state.lang = t.value; store.set("lang", t.value); if (!state.chat.length) render(); else { const L = LANG[t.value]; state.chat.push({ role: "assistant", content: L ? `${L.hello}! From now on I will answer in **${L.name}** (${L.native}).` : "I will reply in the language you type in." }); render(); } if (LANG[t.value] && state.kstyle === null) store.set("kstyle", null); return; }
+  if (t.id === "lang") { state.lang = t.value; store.set("lang", t.value); loadLangPack(t.value); if (!state.chat.length) render(); else { const L = LANG[t.value]; state.chat.push({ role: "assistant", content: L ? `${L.hello}! I will answer in **${L.name}** (${L.native}). If you write or speak in another language, I will reply in that language.` : "I will reply in the language you type in." }); render(); } if (LANG[t.value] && state.kstyle === null) store.set("kstyle", null); return; }
   if (t.id === "profile-select") { state.active = +t.value; store.set("active", state.active); state.chat = []; state.pending = null; state.lastSubject = null; state.match = null; state.openMd = null; state.openAd = null; state.openPd = null; render(); }
   if (t.dataset.pick) {
     const p = state.profiles[+t.value]; if (!p) return; const w = t.dataset.pick;
-    $(`#${w}-name`).value = p.name; $(`#${w}-date`).value = p.date; setTime(w, p.time); $(`#${w}-placebox`).outerHTML = placeFields(w, p);
+    $(`#${w}-name`).value = p.name; $(`#${w}-date`).value = p.date; setTime(w, p.unknownTime ? "" : p.time); resetPicker(w); $(`#${w}-placebox`).outerHTML = placeFields(w, p);
   }
-  if (t.dataset.place) placeChanged(t.dataset.place, t.id.split("-").pop());
+  if (t.dataset.unknown) { const px = t.dataset.unknown; ["hh", "mm", "ap"].forEach(k => { const el = $(`#${px}-${k}`); if (el) { el.disabled = t.checked; if (t.checked && k !== "ap") el.value = ""; } }); syncPlaceHidden && PICK[px] && syncPlaceHidden(px); }
   if (t.id === "fb") store.set("fb", t.value);
 });
-document.addEventListener("input", e => { const t = e.target; if (t.dataset.place && t.id.endsWith("-city")) placeChanged(t.dataset.place, "city"); });
-document.addEventListener("change", e => { const t = e.target, m = /^(f|o|b|g)-(date|hh|mm|ap|lat|lon|tz)$/.exec(t.id || ""); if (m && $(`#${m[1]}-iana`)) placeChanged(m[1], m[2]); });
 document.addEventListener("submit", e => {
   e.preventDefault();
   if (e.target.id === "pform") return safeSave();
@@ -1387,19 +1497,32 @@ document.addEventListener("submit", e => {
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !$("#modal").hidden) return closeForm();
+  if (e.key === "Tab" && !$("#modal").hidden) {   // keep keyboard focus inside the open dialog
+    const f = [...$("#modal").querySelectorAll("button, [href], input, select, textarea, [tabindex]")].filter(x => !x.disabled && x.tabIndex >= 0 && x.type !== "hidden" && x.getClientRects().length);
+    if (f.length) {
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && (i <= 0)) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+    }
+    return;
+  }
   if (e.key !== "Enter" || e.isComposing) return;
   const t = e.target;
   if (t.id === "code") { e.preventDefault(); return $("[data-act=redeem]").click(); }
   if (t.id === "q") { e.preventDefault(); return doAsk(); }
-  if (t.tagName === "INPUT" && t.closest("#pendform") && !t.list) { e.preventDefault(); return savePending(); }
-  if (t.tagName === "INPUT" && t.closest("#pform") && !t.list) { e.preventDefault(); return safeSave(); }
-  if (t.tagName === "INPUT" && t.closest("#matchform") && !t.list) { e.preventDefault(); return doMatch(); }
+  if (t.tagName === "INPUT" && t.type !== "checkbox" && t.type !== "radio" && t.closest("#pendform")) { e.preventDefault(); return savePending(); }
+  if (t.tagName === "INPUT" && t.type !== "checkbox" && t.type !== "radio" && t.closest("#pform")) { e.preventDefault(); return safeSave(); }
+  if (t.tagName === "INPUT" && t.type !== "checkbox" && t.type !== "radio" && t.closest("#matchform")) { e.preventDefault(); return doMatch(); }
 });
-window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (TABS.some(t => t[0] === h) && h !== state.tab) { state.tab = h; render(); } });
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (TABS.some(t => t[0] === h) && h !== state.tab) { if (!$("#modal").hidden) closeForm(); state.tab = h; render(); } });
+window.addEventListener("popstate", () => { const h = location.hash.slice(1); if (TABS.some(t => t[0] === h) && h !== state.tab) { if (!$("#modal").hidden) closeForm(); state.tab = h; render(); } });
 
 /* ---------- boot ---------- */
-{ const h = location.hash.slice(1); if (TABS.some(t => t[0] === h)) state.tab = h; if (h.startsWith("ref-")) { store.set("invitedBy", h.slice(4)); state.tab = "today"; } }
+{ const h = location.hash.slice(1); if (TABS.some(t => t[0] === h)) state.tab = h; if (h.startsWith("ref-")) { store.set("invitedBy", refFromHash(h)); state.tab = "today"; } }
+migrateProfiles();
 render();
+if (API) syncEntitlements().catch(() => {});
+setTimeout(() => { if (state.lang !== "auto") loadLangPack(state.lang); }, 1500);   // the chosen language's answer templates, ready for offline use
 initAds();
 (async () => {
   for (let i = 0; i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));

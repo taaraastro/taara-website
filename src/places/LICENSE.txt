@@ -1,4 +1,33 @@
-These place files are derived from the Countries States Cities Database
-(https://github.com/dr5hn/countries-states-cities-database) and are made
-available under the Open Database License (ODbL) 1.0:
-https://opendatacommons.org/licenses/odbl/1-0/
+Spatik Astro place files (places/*.json, places/<ISO2>/*.json, places/in/*.json, places/_*.json)
+
+These files are derived databases. They are made available under the same terms as their sources:
+
+1. India: places/in/*.json and the state -> district index
+   * All India Pincode Directory, Department of Posts, Ministry of Communications, Government of India,
+     published on data.gov.in (https://www.data.gov.in/catalog/all-india-pincode-directory); February 2026
+     snapshot as packaged by github.com/pawangeek/indiapins.
+   * Local Government Directory (LGD), Ministry of Panchayati Raj (https://lgdirectory.gov.in/), district list
+     via github.com/planemad/india-local-government-directory, plus districts notified later.
+   Both are published under the Government Open Data License - India (GODL):
+   https://data.gov.in/government-open-data-license-india
+   Office names were cleaned (suffixes such as B.O / S.O removed), duplicate names were merged, and every
+   coordinate was checked against the district boundary and the PIN-code area (item 5); wrong or missing
+   coordinates were repaired from the PIN area (marked "approx. location") or the place was removed.
+
+2. Cities outside India, and Indian towns
+   Countries States Cities Database (https://github.com/dr5hn/countries-states-cities-database), made
+   available under the Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/1-0/
+   Our derived place files are available under the same licence.
+
+3. Additional towns and capitals
+   GeoNames (https://www.geonames.org/), cities1000, via https://github.com/lutangar/cities.json,
+   licensed under Creative Commons Attribution 4.0: https://creativecommons.org/licenses/by/4.0/
+
+4. A short curated supplement of pilgrimage towns, district headquarters and alternative names was
+   added by Spatik Astro (coordinates of the town or temple centre).
+
+5. District boundaries, PIN-code areas and district / sub-district headquarters (used to validate and repair
+   Indian coordinates and district labels; not redistributed as such)
+   INDIAN-SHAPEFILES by GitHub user datta07 (https://github.com/datta07/INDIAN-SHAPEFILES), MIT License,
+   Copyright (c) 2022 (MIT: free to use, copy, modify and distribute, provided this copyright and permission
+   notice is included; the full licence text is at https://github.com/datta07/INDIAN-SHAPEFILES/blob/master/LICENSE).

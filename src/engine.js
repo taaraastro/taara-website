@@ -231,7 +231,13 @@ const Astro = (() => {
   }
   const VASHYA_T = [[2,1,1,0.5,1],[1,2,0.5,0,1],[1,0.5,2,1,1],[0.5,0,1,2,0],[1,1,1,0,2]];
   const YONI = ["Horse","Elephant","Sheep","Serpent","Serpent","Dog","Cat","Sheep","Cat","Rat","Rat","Cow","Buffalo","Tiger","Buffalo","Tiger","Deer","Deer","Dog","Monkey","Mongoose","Monkey","Lion","Horse","Lion","Cow","Elephant"];
-  const YONI_ENEMY = [["Horse","Buffalo"],["Elephant","Lion"],["Sheep","Monkey"],["Serpent","Mongoose"],["Dog","Deer"],["Cat","Rat"],["Cow","Tiger"]];
+  /* Classical 14 x 14 Yoni koota table (same 4, friendly 3, neutral 2, unfriendly 1, sworn enemies 0), as in Muhurta Chintamani /
+     Maitreya (saravali.github.io/astrology/koota_yoni.html); that table's two asymmetric cells are read from the upper triangle
+     (Horse-Deer 3, Buffalo-Lion 1), so the score does not depend on who is the groom. */
+  const YONI_NAMES = ["Horse","Elephant","Sheep","Serpent","Dog","Cat","Rat","Cow","Buffalo","Tiger","Deer","Monkey","Mongoose","Lion"];
+  const YONI_TABLE = [[4,2,2,3,2,2,2,1,0,1,3,3,2,1],[2,4,3,3,2,2,2,2,3,1,2,3,2,0],[2,3,4,2,1,2,1,3,3,1,2,0,3,1],[3,3,2,4,2,1,1,1,1,2,2,2,0,2],[2,2,1,2,4,2,1,2,2,1,0,2,1,1],
+    [2,2,2,1,2,4,0,2,2,1,3,3,2,1],[2,2,1,1,1,0,4,2,2,2,2,2,1,2],[1,2,3,1,2,2,2,4,3,0,3,2,2,1],[0,3,3,1,2,2,2,3,4,1,2,2,2,1],[1,1,1,2,1,1,2,0,1,4,1,1,2,1],
+    [3,2,2,2,0,3,2,3,2,1,4,2,2,1],[3,3,0,2,2,3,2,2,2,1,2,4,3,2],[2,2,3,0,1,2,1,2,2,2,2,3,4,2],[1,0,1,2,1,1,2,1,1,1,1,2,2,4]];
   const GANA = i => ["D","M","R","M","D","M","D","D","R","R","M","M","D","R","D","R","D","R","R","M","M","D","R","R","M","M","D"][i];
   const NADI = i => ["Adi","Madhya","Antya","Antya","Madhya","Adi"][i % 6];
   const FRIEND = {
@@ -255,8 +261,7 @@ const Astro = (() => {
     const okT = x => ![3, 5, 7].includes(x);
     k.push({ name: "Tara", max: 3, score: okT(t1) && okT(t2) ? 3 : okT(t1) || okT(t2) ? 1.5 : 0, about: "Health and wellbeing of the couple" });
     const yb = YONI[bn], yg = YONI[gn];
-    const enemy = YONI_ENEMY.some(([a, b]) => (a === yb && b === yg) || (a === yg && b === yb));
-    k.push({ name: "Yoni", max: 4, score: yb === yg ? 4 : enemy ? 0 : 2, about: `Physical intimacy (${yb} & ${yg})` });
+    k.push({ name: "Yoni", max: 4, score: YONI_TABLE[YONI_NAMES.indexOf(yb)][YONI_NAMES.indexOf(yg)], about: `Physical intimacy (${yb} & ${yg})` });
     const lb = SIGN_LORD[bs], lg = SIGN_LORD[gs], r1 = rel(lb, lg), r2 = rel(lg, lb);
     const pair = [r1, r2].sort().join("");
     const gm = lb === lg ? 5 : ({ ff: 5, fn: 4, nn: 3, ef: 1, en: 0.5, ee: 0 })[pair];
